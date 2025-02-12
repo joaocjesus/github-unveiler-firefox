@@ -4,7 +4,6 @@
   // ------------------------------
   const CACHE_KEY = "githubDisplayNameCache";
   const displayNames = {};    // username => fetched display name
-  const pendingFetches = {};  // username => flag to prevent duplicate fetches
   const elementsByUsername = {}; // username => array of update callbacks
 
   // Helper: Get the cache from chrome.storage.local.
@@ -12,15 +11,6 @@
     return new Promise((resolve) => {
       chrome.storage.local.get([CACHE_KEY], (result) => {
         resolve(result[CACHE_KEY] || {});
-      });
-    });
-  }
-
-  // Helper: Update the cache in chrome.storage.local.
-  function setCache(cache) {
-    return new Promise((resolve) => {
-      chrome.storage.local.set({ [CACHE_KEY]: cache }, () => {
-        resolve();
       });
     });
   }
@@ -47,81 +37,6 @@
     });
   }
 
-  // ------------------------------
-  // Fetching & Caching Display Names
-  // ------------------------------
-  async function fetchDisplayName(username) {
-    // Avoid duplicate fetches.
-    if (pendingFetches[username]) return;
-    pendingFetches[username] = true;
-    try {
-      const now = Date.now();
-      const cache = await getCache();
-      const serverCache = cache[location.hostname] || {};
-      const entry = serverCache[username];
-      const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
-      if (entry && now - entry.timestamp < SEVEN_DAYS) {
-        // Use cached display name.
-        displayNames[username] = entry.displayName;
-      } else {
-        // Fetch the user profile from the same server.
-        const profileUrl = location.origin + "/" + username;
-        const response = await fetch(profileUrl);
-        if (!response.ok) {
-          throw new Error("HTTP error " + response.status);
-        }
-        const html = await response.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, "text/html");
-        // GitHub profiles typically show the display name in an element with the class "vcard-fullname".
-        let el = doc.querySelector(".vcard-fullname");
-        let fetchedName = el ? el.textContent.trim() : "";
-        if (!fetchedName) {
-          fetchedName = username; // fallback
-        }
-        displayNames[username] = fetchedName;
-        // Update the server-specific cache.
-        serverCache[username] = { displayName: fetchedName, timestamp: now };
-        cache[location.hostname] = serverCache;
-        await setCache(cache);
-      }
-      updateElements(username);
-    } catch (err) {
-      console.error("Error fetching display name for @" + username, err);
-      displayNames[username] = username; // fallback so that we don't keep retrying
-      updateElements(username);
-    } finally {
-      delete pendingFetches[username];
-    }
-  }
-
-  // ------------------------------
-  // DOM Processing Functions
-  // ------------------------------
-
-  // Process anchor tags whose text is exactly "@username".
-  function processAnchorsByText(root) {
-    const anchors = root.querySelectorAll("a");
-    anchors.forEach((anchor) => {
-      // Trim and check if the text matches "@username" exactly.
-      const text = anchor.textContent.trim();
-      const match = text.match(/^@([a-zA-Z0-9_-]+)$/);
-      if (match) {
-        const username = match[1];
-        // When the display name is ready, replace the text.
-        registerElement(username, (displayName) => {
-          anchor.textContent = displayName;
-        });
-        // If we already have the display name, update immediately.
-        if (displayNames[username]) {
-          anchor.textContent = displayNames[username];
-        } else {
-          fetchDisplayName(username);
-        }
-      }
-    });
-  }
-
   /**
    * Replaces all occurrences of the username (with an optional "@" prefix) in the text nodes
    * under the given element with the provided displayName.
@@ -139,7 +54,77 @@
       }
     }
   }
-  
+
+  // ------------------------------
+  // Fetching & Caching Display Names
+  // ------------------------------
+  async function fetchDisplayName(username) {
+    // Only look up in cache if not already present in displayNames
+    if (displayNames[username]) {
+      updateElements(username);
+    }
+    else {
+      try {
+        const now = Date.now();
+        const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+        // First, get the cache.
+        const cache = await getCache();
+        const serverCache = cache[location.hostname] || {};
+        const entry = serverCache[username];
+
+        if (entry && (now - entry.timestamp < SEVEN_DAYS)) {
+          // Use the cached display name.
+          displayNames[username] = entry.displayName;
+        } else {
+          // Request the name from the background worker (this ensures we only request at most one request per user).
+          await chrome.runtime.sendMessage({
+            type: "fetchDisplayName",
+            origin: location.hostname,
+            username: username
+          });
+          const cache = await getCache();
+          const serverCache = cache[location.hostname] || {};
+          const entry = serverCache[username];
+          displayNames[username] = entry ? entry.displayName : username;
+        }
+
+        updateElements(username);
+      } catch (err) {
+        console.error("Error fetching display name for @" + username, err);
+        displayNames[username] = username; // fallback so that we don't keep retrying
+        updateElements(username);
+      }
+    }
+  }
+
+  // ------------------------------
+  // DOM Processing Functions
+  // ------------------------------
+
+  // Process anchor tags whose text is exactly "@username".
+  function processAnchorsByText(root) {
+    const anchors = root.querySelectorAll("a");
+    anchors.forEach((anchor) => {
+      // Trim and check if the text matches "@username" exactly.
+      const text = anchor.textContent.trim();
+      const match = text.match(/^@([a-zA-Z0-9_-]+)$/);
+      if (match) {
+        const username = match[1];
+        // If we already have the display name, update immediately.
+        if (displayNames[username]) {
+          updateTextNodes(anchor, username, displayNames[username]);
+        } else {
+          // When the display name is ready, replace the text.
+          registerElement(username, (displayName) => {
+            updateTextNodes(anchor, username, displayName);
+          });
+          fetchDisplayName(username);
+        }
+      }
+    });
+  }
+
   /**
    * Processes anchor tags that have a data-hovercard-url starting with "/users/".
    * For each such anchor:
@@ -161,18 +146,18 @@
           return;
         }
       }
-  
+
       // Extract the username from the data-hovercard-url.
       const hover = anchor.getAttribute("data-hovercard-url");
       const match = hover.match(/^\/users\/([^\/?]+)/);
       if (!match) return;
       const username = match[1];
-  
+
       // Register a callback to update the anchor's descendant text nodes once the display name is available.
       registerElement(username, (displayName) => {
         updateTextNodes(anchor, username, displayName);
       });
-  
+
       // If the display name is already available, update immediately; otherwise, fetch it.
       if (displayNames[username]) {
         updateTextNodes(anchor, username, displayNames[username]);

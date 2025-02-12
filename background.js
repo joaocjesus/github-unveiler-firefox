@@ -72,3 +72,122 @@ function injectContentScript(tabId) {
     }
   });
 }
+
+// Listen for messages to update the cache
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "fetchDisplayName") {
+    fetchDisplayName(message.origin, message.username)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.toString() }));
+    // Return true to indicate asynchronous response.
+    return true;
+  }
+});
+
+const CACHE_KEY = "githubDisplayNameCache";
+
+// Helper: Get the cache from chrome.storage.local.
+function getCache() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([CACHE_KEY], (result) => {
+      resolve(result[CACHE_KEY] || {});
+    });
+  });
+}
+
+// Helper: Update the cache in chrome.storage.local.
+function setCache(cache) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [CACHE_KEY]: cache }, () => {
+      resolve();
+    });
+  });
+}
+
+let nameLocks = {}
+
+// Assume nameLocks, getCache, and updateCache are defined elsewhere.
+
+async function fetchDisplayName(origin, username) {
+  // Avoid duplicate fetches with a lock per origin + username.
+  const key = origin + username;
+  if (!nameLocks[key]) nameLocks[key] = Promise.resolve();
+
+  nameLocks[key] = nameLocks[key].then(async () => {
+    try {
+      // See if another instance already grabbed the display name.
+      const cache = await getCache();
+      const serverCache = cache[origin] || {};
+      if (!serverCache[username]) {
+        // Fetch and parse the user profile.
+        const profileUrl = "https://" + origin + "/" + username;
+        const response = await fetch(profileUrl);
+        if (!response.ok) {
+          throw new Error("HTTP error " + response.status);
+        }
+        const html = await response.text();
+
+        // Ensure that an offscreen document exists for DOM parsing.
+        await ensureOffscreenDocument();
+
+        // Use the offscreen document to extract the display name.
+        const displayName = await parseDisplayNameOffscreen(html, username);
+
+        // Now update the cache.
+        await updateCache(origin, username, displayName);
+      }
+    } catch (err) {
+      console.error("Error fetching display name for @" + username, err);
+    }
+  }).catch((err) => {
+    console.error("Error updating cache:", err);
+  });
+  return nameLocks[key];
+}
+
+// Creates an offscreen document if one does not already exist.
+async function ensureOffscreenDocument() {
+  const exists = await chrome.offscreen.hasDocument();
+  if (!exists) {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html', // This is your offscreen HTML file.
+      reasons: ['DOM_PARSER'], // Reason for creating an offscreen document.
+      justification: 'Needed to parse HTML for display name extraction.'
+    });
+  }
+}
+
+// Sends the HTML to the offscreen document and awaits the parsed display name.
+function parseDisplayNameOffscreen(html, username) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { action: "parseDisplayName", html, username },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          return reject(chrome.runtime.lastError);
+        }
+        if (response.error) {
+          return reject(response.error);
+        }
+        resolve(response.displayName);
+      }
+    );
+  });
+}
+
+
+let cacheLock = Promise.resolve();
+
+// Helper function to write to the cache
+async function updateCache(origin, username, displayName) {
+  cacheLock = cacheLock.then(async () => {
+    const cache = await getCache(); // Your getCache function
+    const serverCache = cache[origin] || {};
+    serverCache[username] = { displayName: displayName, timestamp: Date.now() };
+    cache[origin] = serverCache;
+    await setCache(cache); // Your setCache function
+  }).catch((err) => {
+    console.error("Error updating cache:", err);
+  });
+  return cacheLock;
+}
