@@ -15,22 +15,18 @@ chrome.action.onClicked.addListener((tab) => {
     return;
   }
 
-  if (url.hostname.toLowerCase().includes("github")) {
-    const originPattern = `${url.protocol}//${url.hostname}/*`;
-    console.log("Requesting permission for", originPattern);
+  const originPattern = `${url.protocol}//${url.hostname}/*`;
+  console.log("Requesting permission for", originPattern);
 
-    // Request permission as part of a user gesture.
-    chrome.permissions.request({ origins: [originPattern] }, (granted) => {
-      if (granted) {
-        console.log("Permission granted for", originPattern);
-        injectContentScript(tab.id);
-      } else {
-        console.log("Permission denied for", originPattern);
-      }
-    });
-  } else {
-    console.log("This tab is not a GitHub page.");
-  }
+  // Request permission as part of a user gesture.
+  chrome.permissions.request({ origins: [originPattern] }, (granted) => {
+    if (granted) {
+      console.log("Permission granted for", originPattern);
+      injectContentScript(tab.id);
+    } else {
+      console.log("Permission denied for", originPattern);
+    }
+  });
 });
 
 // Listen for tab updates to auto-inject the content script when permission is already granted.
