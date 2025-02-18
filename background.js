@@ -1,6 +1,11 @@
 // background.js
 
-// Listen for clicks on the extension's browser action icon to request permission.
+const CACHE_KEY = "githubDisplayNameCache";
+let nameLocks = {};  // key: origin+username, value: true if a fetch is in progress
+let cacheLock = Promise.resolve();
+
+// --- Browser Action & Content Script Injection ---
+
 chrome.action.onClicked.addListener((tab) => {
   if (!tab.url) {
     console.error("No URL found for the active tab.");
@@ -40,22 +45,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       return;
     }
 
-    // Check if the URL's hostname contains "github"
-    if (url.hostname.toLowerCase().includes("github")) {
-      const originPattern = `${url.protocol}//${url.hostname}/*`;
-      chrome.permissions.contains({ origins: [originPattern] }, (hasPermission) => {
-        if (hasPermission) {
-          console.log("Auto injecting content script for", originPattern);
-          injectContentScript(tabId);
-        } else {
-          console.log("No permission for", originPattern, "; content script not injected.");
-        }
-      });
-    }
+    const originPattern = `${url.protocol}//${url.hostname}/*`;
+    chrome.permissions.contains({ origins: [originPattern] }, (hasPermission) => {
+      if (hasPermission) {
+        console.log("Auto injecting content script for", originPattern);
+        injectContentScript(tabId);
+      } else {
+        console.log("No permission for", originPattern, "; content script not injected.");
+      }
+    });
   }
 });
 
-// Helper function to inject the content script.
 function injectContentScript(tabId) {
   chrome.scripting.executeScript({
     target: { tabId: tabId },
@@ -69,18 +70,33 @@ function injectContentScript(tabId) {
   });
 }
 
-// Listen for messages to update the cache
+// --- Lock Manager & Cache Update ---
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "fetchDisplayName") {
-    fetchDisplayName(message.origin, message.username)
-      .then(() => sendResponse({ success: true }))
-      .catch((err) => sendResponse({ success: false, error: err.toString() }));
-    // Return true to indicate asynchronous response.
+  if (message.type === "acquireLock") {
+    // Only one fetch per origin+username
+    const key = message.origin + message.username;
+    if (!nameLocks[key]) {
+      nameLocks[key] = true;
+      sendResponse({ acquired: true });
+    } else {
+      sendResponse({ acquired: false });
+    }
+  } else if (message.type === "releaseLock") {
+    updateCache(message.origin, message.username, message.displayName)
+      .then(() => {
+        const key = message.origin + message.username;
+        delete nameLocks[key];
+        sendResponse({ success: true });
+      })
+      .catch((err) => {
+        console.error("Error updating cache:", err);
+        sendResponse({ success: false, error: err.toString() });
+      });
+    // Indicate that we'll send a response asynchronously.
     return true;
   }
 });
-
-const CACHE_KEY = "githubDisplayNameCache";
 
 // Helper: Get the cache from chrome.storage.local.
 function getCache() {
@@ -100,88 +116,13 @@ function setCache(cache) {
   });
 }
 
-let nameLocks = {}
-
-// Assume nameLocks, getCache, and updateCache are defined elsewhere.
-
-async function fetchDisplayName(origin, username) {
-  // Avoid duplicate fetches with a lock per origin + username.
-  const key = origin + username;
-  if (!nameLocks[key]) nameLocks[key] = Promise.resolve();
-
-  nameLocks[key] = nameLocks[key].then(async () => {
-    try {
-      // See if another instance already grabbed the display name.
-      const cache = await getCache();
-      const serverCache = cache[origin] || {};
-      if (!serverCache[username]) {
-        // Fetch and parse the user profile.
-        const profileUrl = "https://" + origin + "/" + username;
-        const response = await fetch(profileUrl);
-        if (!response.ok) {
-          throw new Error("HTTP error " + response.status);
-        }
-        const html = await response.text();
-
-        // Ensure that an offscreen document exists for DOM parsing.
-        await ensureOffscreenDocument();
-
-        // Use the offscreen document to extract the display name.
-        const displayName = await parseDisplayNameOffscreen(html, username);
-
-        // Now update the cache.
-        await updateCache(origin, username, displayName);
-      }
-    } catch (err) {
-      console.error("Error fetching display name for @" + username, err);
-    }
-  }).catch((err) => {
-    console.error("Error updating cache:", err);
-  });
-  return nameLocks[key];
-}
-
-// Creates an offscreen document if one does not already exist.
-async function ensureOffscreenDocument() {
-  const exists = await chrome.offscreen.hasDocument();
-  if (!exists) {
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html', // This is your offscreen HTML file.
-      reasons: ['DOM_PARSER'], // Reason for creating an offscreen document.
-      justification: 'Needed to parse HTML for display name extraction.'
-    });
-  }
-}
-
-// Sends the HTML to the offscreen document and awaits the parsed display name.
-function parseDisplayNameOffscreen(html, username) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(
-      { action: "parseDisplayName", html, username },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          return reject(chrome.runtime.lastError);
-        }
-        if (response.error) {
-          return reject(response.error);
-        }
-        resolve(response.displayName);
-      }
-    );
-  });
-}
-
-
-let cacheLock = Promise.resolve();
-
-// Helper function to write to the cache
 async function updateCache(origin, username, displayName) {
   cacheLock = cacheLock.then(async () => {
-    const cache = await getCache(); // Your getCache function
+    const cache = await getCache();
     const serverCache = cache[origin] || {};
-    serverCache[username] = { displayName: displayName, timestamp: Date.now() };
+    serverCache[username] = { displayName, timestamp: Date.now() };
     cache[origin] = serverCache;
-    await setCache(cache); // Your setCache function
+    await setCache(cache);
   }).catch((err) => {
     console.error("Error updating cache:", err);
   });

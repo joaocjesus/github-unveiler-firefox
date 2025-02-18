@@ -6,8 +6,7 @@
   "permissions": [
     "scripting",
     "tabs",
-    "storage",
-    "offscreen"
+    "storage"
   ],
   "optional_host_permissions": ["https://*/*"],
   "action": {

@@ -62,68 +62,87 @@
     // Only look up in cache if not already present in displayNames
     if (displayNames[username]) {
       updateElements(username);
+      return;
     }
-    else {
-      try {
-        const now = Date.now();
-        const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+    try {
+      const now = Date.now();
+      const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 
-        // First, get the cache.
-        const cache = await getCache();
-        const serverCache = cache[location.hostname] || {};
-        const entry = serverCache[username];
+      // Check cache first.
+      let cache = await getCache();
+      const serverCache = cache[location.hostname] || {};
+      let entry = serverCache[username];
 
-        if (entry && (now - entry.timestamp < SEVEN_DAYS)) {
-          // Use the cached display name.
-          displayNames[username] = entry.displayName;
-        } else {
-          // Request the name from the background worker (this ensures we only request at most one request per user).
-          await chrome.runtime.sendMessage({
-            type: "fetchDisplayName",
-            origin: location.hostname,
-            username: username
-          });
-          const cache = await getCache();
-          const serverCache = cache[location.hostname] || {};
-          const entry = serverCache[username];
-          displayNames[username] = entry ? entry.displayName : username;
-        }
-
+      if (entry && (now - entry.timestamp < SEVEN_DAYS)) {
+        displayNames[username] = entry.displayName;
         updateElements(username);
-      } catch (err) {
-        console.error("Error fetching display name for @" + username, err);
-        displayNames[username] = username; // fallback so that we don't keep retrying
+        return;
+      }
+
+      // Request the lock from the background service.
+      const lockResponse = await chrome.runtime.sendMessage({
+        type: "acquireLock",
+        origin: location.hostname,
+        username: username
+      });
+
+      if (lockResponse.acquired) {
+        // We have the lock—fetch the GitHub profile page.
+        const profileUrl = `https://${location.hostname}/${username}`;
+        const response = await fetch(profileUrl);
+        if (!response.ok) {
+          throw new Error("HTTP error " + response.status);
+        }
+        const html = await response.text();
+
+        // Parse the HTML using a DOMParser.
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const el = doc.querySelector('.vcard-fullname');
+        let displayName = el ? el.textContent.trim() : username;
+
+        // Tell the background to update the cache and release the lock.
+        await chrome.runtime.sendMessage({
+          type: "releaseLock",
+          origin: location.hostname,
+          username: username,
+          displayName: displayName
+        });
+
+        displayNames[username] = displayName;
+        updateElements(username);
+      } else {
+        // Another content script is already fetching this profile.
+        // Poll until the cache is updated.
+        const maxAttempts = 10;
+        let attempt = 0;
+        const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        while (attempt < maxAttempts) {
+          await wait(500);
+          let cache = await getCache();
+          const serverCache = cache[location.hostname] || {};
+          let entry = serverCache[username];
+          if (entry && (Date.now() - entry.timestamp < SEVEN_DAYS)) {
+            displayNames[username] = entry.displayName;
+            updateElements(username);
+            return;
+          }
+          attempt++;
+        }
+        // Fallback if we still haven't received a display name.
+        displayNames[username] = username;
         updateElements(username);
       }
+    } catch (err) {
+      console.error("Error fetching display name for @" + username, err);
+      displayNames[username] = username;
+      updateElements(username);
     }
   }
 
   // ------------------------------
   // DOM Processing Functions
   // ------------------------------
-
-  // Process anchor tags whose text is exactly "@username".
-  function processAnchorsByText(root) {
-    const anchors = root.querySelectorAll("a");
-    anchors.forEach((anchor) => {
-      // Trim and check if the text matches "@username" exactly.
-      const text = anchor.textContent.trim();
-      const match = text.match(/^@([a-zA-Z0-9_-]+)$/);
-      if (match) {
-        const username = match[1];
-        // If we already have the display name, update immediately.
-        if (displayNames[username]) {
-          updateTextNodes(anchor, username, displayNames[username]);
-        } else {
-          // When the display name is ready, replace the text.
-          registerElement(username, (displayName) => {
-            updateTextNodes(anchor, username, displayName);
-          });
-          fetchDisplayName(username);
-        }
-      }
-    });
-  }
 
   /**
    * Processes anchor tags that have a data-hovercard-url starting with "/users/".
@@ -149,7 +168,7 @@
 
       // Extract the username from the data-hovercard-url.
       const hover = anchor.getAttribute("data-hovercard-url");
-      const match = hover.match(/^\/users\/([^\/?]+)/);
+      const match = hover.match(/^\/users\/((?!.*%5Bbot%5D)[^\/?]+)/);
       if (!match) return;
       const username = match[1];
 
@@ -167,25 +186,15 @@
     });
   }
 
-  // Process both types of elements in the provided root.
-  function processAll(root) {
-    processAnchorsByText(root);
-    processAnchorsByHovercard(root);
-  }
+  // Initial processing.
+  processAnchorsByHovercard(document.body);
 
-  // ------------------------------
-  // Initial Processing & MutationObserver
-  // ------------------------------
-
-  // Process the current document.
-  processAll(document.body);
-
-  // Set up a MutationObserver to process newly added elements.
+  // Set up a MutationObserver to handle new elements.
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       mutation.addedNodes.forEach((node) => {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          processAll(node);
+          processAnchorsByHovercard(node);
         }
       });
     }

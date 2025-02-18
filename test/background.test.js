@@ -1,203 +1,286 @@
 // background.test.js
+
+// We assume background.js is in the same folder.
+// The tests below reset the module and set up our own global.chrome mocks.
 describe("background.js", () => {
+  // We'll capture the listener callbacks for the events so we can call them in our tests.
   let onClickedCallback, onUpdatedCallback, onMessageCallback;
+  const CACHE_KEY = "githubDisplayNameCache";
+  let fakeStorage;
 
   beforeEach(() => {
+    // Reset modules so that background.js re-registers its listeners with our mocks.
     jest.resetModules();
 
-    // Set up global chrome API mocks
+    // Create an in-memory storage for chrome.storage.local.
+    fakeStorage = {};
+
+    // Set up our global.chrome mock object.
     global.chrome = {
       action: {
-        onClicked: { addListener: jest.fn() },
+        onClicked: {
+          addListener: (callback) => {
+            onClickedCallback = callback;
+          },
+        },
       },
       permissions: {
         request: jest.fn(),
-        contains: jest.fn()
+        contains: jest.fn(),
       },
       tabs: {
-        onUpdated: { addListener: jest.fn() },
-      },
-      scripting: {
-        executeScript: jest.fn((options, callback) => callback())
+        onUpdated: {
+          addListener: (callback) => {
+            onUpdatedCallback = callback;
+          },
+        },
       },
       runtime: {
-        onMessage: { addListener: jest.fn() },
+        onMessage: {
+          addListener: (callback) => {
+            onMessageCallback = callback;
+          },
+        },
         lastError: null,
-        sendMessage: jest.fn(),
+      },
+      scripting: {
+        executeScript: jest.fn((options, callback) => {
+          // By default, simulate a successful injection.
+          callback();
+        }),
       },
       storage: {
         local: {
-          get: jest.fn((keys, callback) => callback({})),
-          set: jest.fn((obj, callback) => callback()),
-        }
+          get: jest.fn((keys, callback) => {
+            // Return an object with the cache key.
+            callback({ [CACHE_KEY]: fakeStorage[CACHE_KEY] || {} });
+          }),
+          set: jest.fn((obj, callback) => {
+            // Update our fakeStorage.
+            fakeStorage[CACHE_KEY] = obj[CACHE_KEY];
+            callback();
+          }),
+        },
       },
-      offscreen: {
-        hasDocument: jest.fn(() => Promise.resolve(false)),
-        createDocument: jest.fn(() => Promise.resolve()),
-      }
     };
 
-    // Spy on console methods to suppress output during tests.
+    // Spy on console.log and console.error.
     jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(console, "error").mockImplementation(() => {});
 
-    // Now load the background script (which registers its listeners immediately)
+    // Require the background script (which immediately registers its event listeners).
     require("../background.js");
-
-    // Retrieve the registered listeners so we can simulate events.
-    onClickedCallback = chrome.action.onClicked.addListener.mock.calls[0][0];
-    onUpdatedCallback = chrome.tabs.onUpdated.addListener.mock.calls[0][0];
-    onMessageCallback = chrome.runtime.onMessage.addListener.mock.calls[0][0];
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  test("onClicked with no URL", () => {
-    const tab = { id: 1, url: undefined };
-    onClickedCallback(tab);
-    expect(console.error).toHaveBeenCalledWith("No URL found for the active tab.");
-  });
-
-  test("onClicked with an invalid URL", () => {
-    const tab = { id: 1, url: "invalid-url" };
-    onClickedCallback(tab);
-    expect(console.error).toHaveBeenCalledWith("Invalid URL:", "invalid-url");
-  });
-
-  test("onClicked with a valid GitHub URL and permission granted", () => {
-    const tab = { id: 1, url: "https://github.com/user" };
-    const originPattern = "https://github.com/*";
-    chrome.permissions.request.mockImplementation((options, cb) => {
-      cb(true);
-    });
-    onClickedCallback(tab);
-    expect(chrome.permissions.request).toHaveBeenCalledWith(
-      { origins: [originPattern] },
-      expect.any(Function)
-    );
-    expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
-      { target: { tabId: tab.id }, files: ["content.js"] },
-      expect.any(Function)
-    );
-    expect(console.log).toHaveBeenCalledWith("Content script injected into tab", tab.id);
-  });
-
-  test("onClicked with a valid GitHub URL and permission denied", () => {
-    const tab = { id: 1, url: "https://github.com/user" };
-    const originPattern = "https://github.com/*";
-    chrome.permissions.request.mockImplementation((options, cb) => {
-      cb(false);
-    });
-    onClickedCallback(tab);
-    expect(chrome.permissions.request).toHaveBeenCalledWith(
-      { origins: [originPattern] },
-      expect.any(Function)
-    );
-    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
-    expect(console.log).toHaveBeenCalledWith("Permission denied for", originPattern);
-  });
-
-  test("tabs.onUpdated with non-'complete' status does nothing", () => {
-    const tabId = 1;
-    const changeInfo = { status: "loading" };
-    const tab = { id: 1, url: "https://github.com/user" };
-    onUpdatedCallback(tabId, changeInfo, tab);
-    expect(chrome.permissions.contains).not.toHaveBeenCalled();
-  });
-
-  test("tabs.onUpdated with an invalid URL does nothing", () => {
-    const tabId = 1;
-    const changeInfo = { status: "complete" };
-    const tab = { id: 1, url: "not-a-valid-url" };
-    onUpdatedCallback(tabId, changeInfo, tab);
-    expect(chrome.permissions.contains).not.toHaveBeenCalled();
-  });
-
-  test("tabs.onUpdated with a valid GitHub URL and permission granted", () => {
-    const tabId = 1;
-    const changeInfo = { status: "complete" };
-    const tab = { id: 1, url: "https://github.com/user" };
-    const originPattern = "https://github.com/*";
-    chrome.permissions.contains.mockImplementation((options, cb) => {
-      cb(true);
-    });
-    onUpdatedCallback(tabId, changeInfo, tab);
-    expect(chrome.permissions.contains).toHaveBeenCalledWith(
-      { origins: [originPattern] },
-      expect.any(Function)
-    );
-    expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
-      { target: { tabId: tabId }, files: ["content.js"] },
-      expect.any(Function)
-    );
-    expect(console.log).toHaveBeenCalledWith("Auto injecting content script for", originPattern);
-  });
-
-  test("tabs.onUpdated with a valid GitHub URL and permission not granted", () => {
-    const tabId = 1;
-    const changeInfo = { status: "complete" };
-    const tab = { id: 1, url: "https://github.com/user" };
-    const originPattern = "https://github.com/*";
-    chrome.permissions.contains.mockImplementation((options, cb) => {
-      cb(false);
-    });
-    onUpdatedCallback(tabId, changeInfo, tab);
-    expect(chrome.permissions.contains).toHaveBeenCalledWith(
-      { origins: [originPattern] },
-      expect.any(Function)
-    );
-    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
-    expect(console.log).toHaveBeenCalledWith("No permission for", originPattern, "; content script not injected.");
-  });
-
-  test("onMessage 'fetchDisplayName' calls fetch and offscreen functions and returns success", async () => {
-    // Set up a fake HTML response that contains a .vcard-fullname element.
-    const fakeHTML = `<div class="vcard-fullname">John Doe</div>`;
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      text: () => Promise.resolve(fakeHTML)
-    });
-    // Simulate that no offscreen document exists.
-    chrome.offscreen.hasDocument = jest.fn(() => Promise.resolve(false));
-    // Simulate creation of offscreen document.
-    chrome.offscreen.createDocument = jest.fn(() => Promise.resolve());
-    // Simulate the offscreen parser (via runtime.sendMessage) returning the display name.
-    chrome.runtime.sendMessage.mockImplementation((message, callback) => {
-      callback({ displayName: "John Doe" });
-    });
-    // Ensure storage returns an empty cache initially.
-    chrome.storage.local.get.mockImplementation((keys, callback) => {
-      callback({});
+  describe("chrome.action.onClicked", () => {
+    it("should log an error if the tab has no URL", () => {
+      const tab = { id: 1, url: null };
+      onClickedCallback(tab);
+      expect(console.error).toHaveBeenCalledWith("No URL found for the active tab.");
     });
 
-    let sendResponseCalled = false;
-    await new Promise((resolve) => {
-      const result = onMessageCallback(
-        { type: "fetchDisplayName", origin: "github.com", username: "johndoe" },
-        null,
-        (response) => {
-          expect(response).toEqual({ success: true });
-          sendResponseCalled = true;
-          resolve();
-        }
+    it("should log an error for an invalid URL", () => {
+      const tab = { id: 1, url: "not-a-valid-url" };
+      onClickedCallback(tab);
+      expect(console.error).toHaveBeenCalledWith("Invalid URL:", tab.url);
+    });
+
+    it("should request permission and inject content script when permission is granted", () => {
+      const tab = { id: 1, url: "https://example.com/page" };
+      const expectedOriginPattern = "https://example.com/*";
+
+      // Simulate permissions.request calling its callback with granted = true.
+      chrome.permissions.request.mockImplementation((options, callback) => {
+        // Verify that the correct origin pattern is requested.
+        expect(options.origins).toContain(expectedOriginPattern);
+        callback(true);
+      });
+
+      onClickedCallback(tab);
+
+      expect(console.log).toHaveBeenCalledWith("Requesting permission for", expectedOriginPattern);
+      expect(console.log).toHaveBeenCalledWith("Permission granted for", expectedOriginPattern);
+      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
+        {
+          target: { tabId: tab.id },
+          files: ["content.js"],
+        },
+        expect.any(Function)
       );
-      // If the onMessage callback returns true (to indicate async response), wait for resolution.
-      if (!result) resolve();
     });
 
-    expect(fetch).toHaveBeenCalledWith("https://github.com/johndoe");
-    expect(chrome.offscreen.hasDocument).toHaveBeenCalled();
-    expect(chrome.offscreen.createDocument).toHaveBeenCalledWith({
-      url: "offscreen.html",
-      reasons: ["DOM_PARSER"],
-      justification: "Needed to parse HTML for display name extraction."
+    it("should log that permission was denied if not granted", () => {
+      const tab = { id: 1, url: "https://example.com/page" };
+      const expectedOriginPattern = "https://example.com/*";
+
+      chrome.permissions.request.mockImplementation((options, callback) => {
+        callback(false);
+      });
+
+      onClickedCallback(tab);
+
+      expect(console.log).toHaveBeenCalledWith("Requesting permission for", expectedOriginPattern);
+      expect(console.log).toHaveBeenCalledWith("Permission denied for", expectedOriginPattern);
+      expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
     });
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
-      { action: "parseDisplayName", html: fakeHTML, username: "johndoe" },
-      expect.any(Function)
-    );
-    expect(sendResponseCalled).toBe(true);
+  });
+
+  describe("chrome.tabs.onUpdated", () => {
+    it("should do nothing if the tab status is not 'complete'", () => {
+      const tab = { id: 1, url: "https://example.com/page" };
+      const changeInfo = { status: "loading" };
+      onUpdatedCallback(tab.id, changeInfo, tab);
+      expect(chrome.permissions.contains).not.toHaveBeenCalled();
+    });
+
+    it("should do nothing for an invalid URL", () => {
+      const tab = { id: 1, url: "not-a-valid-url" };
+      const changeInfo = { status: "complete" };
+      onUpdatedCallback(tab.id, changeInfo, tab);
+      expect(chrome.permissions.contains).not.toHaveBeenCalled();
+    });
+
+    it("should auto inject the content script if permission is already granted", () => {
+      const tab = { id: 1, url: "https://example.com/page" };
+      const changeInfo = { status: "complete" };
+      const expectedOriginPattern = "https://example.com/*";
+
+      chrome.permissions.contains.mockImplementation((options, callback) => {
+        expect(options.origins).toContain(expectedOriginPattern);
+        callback(true);
+      });
+
+      onUpdatedCallback(tab.id, changeInfo, tab);
+
+      expect(console.log).toHaveBeenCalledWith("Auto injecting content script for", expectedOriginPattern);
+      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
+        {
+          target: { tabId: tab.id },
+          files: ["content.js"],
+        },
+        expect.any(Function)
+      );
+    });
+
+    it("should not inject the content script if permission is not granted", () => {
+      const tab = { id: 1, url: "https://example.com/page" };
+      const changeInfo = { status: "complete" };
+      const expectedOriginPattern = "https://example.com/*";
+
+      chrome.permissions.contains.mockImplementation((options, callback) => {
+        callback(false);
+      });
+
+      onUpdatedCallback(tab.id, changeInfo, tab);
+
+      expect(console.log).toHaveBeenCalledWith(
+        "No permission for",
+        expectedOriginPattern,
+        "; content script not injected."
+      );
+      expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("chrome.runtime.onMessage", () => {
+    it('should acquire a lock when one is not already held ("acquireLock")', () => {
+      const message = { type: "acquireLock", origin: "https://example.com", username: "user1" };
+      const sendResponse = jest.fn();
+
+      // First call should acquire the lock.
+      onMessageCallback(message, null, sendResponse);
+      expect(sendResponse).toHaveBeenCalledWith({ acquired: true });
+    });
+
+    it('should not acquire a lock if it is already held ("acquireLock")', () => {
+      const message = { type: "acquireLock", origin: "https://example.com", username: "user1" };
+      const sendResponse1 = jest.fn();
+      const sendResponse2 = jest.fn();
+
+      // First call acquires the lock.
+      onMessageCallback(message, null, sendResponse1);
+      expect(sendResponse1).toHaveBeenCalledWith({ acquired: true });
+
+      // Second call for the same origin+username should fail.
+      onMessageCallback(message, null, sendResponse2);
+      expect(sendResponse2).toHaveBeenCalledWith({ acquired: false });
+    });
+
+    it('should update the cache and release the lock on "releaseLock" message', (done) => {
+      const message = {
+        type: "releaseLock",
+        origin: "https://example.com",
+        username: "user1",
+        displayName: "User One",
+      };
+
+      // First, acquire the lock.
+      const acquireResponse = jest.fn();
+      onMessageCallback({ type: "acquireLock", origin: message.origin, username: message.username }, null, acquireResponse);
+      expect(acquireResponse).toHaveBeenCalledWith({ acquired: true });
+
+      // For releaseLock, the listener returns true to indicate async response.
+      const sendResponse = (response) => {
+        try {
+          expect(response).toEqual({ success: true });
+          // Check that the cache was updated.
+          const storedCache = fakeStorage[CACHE_KEY];
+          expect(storedCache[message.origin]).toBeDefined();
+          expect(storedCache[message.origin][message.username]).toBeDefined();
+          expect(storedCache[message.origin][message.username].displayName).toBe(message.displayName);
+          // Since the lock is released, we can acquire it again.
+          const newResponse = jest.fn();
+          onMessageCallback({ type: "acquireLock", origin: message.origin, username: message.username }, null, newResponse);
+          expect(newResponse).toHaveBeenCalledWith({ acquired: true });
+          done();
+        } catch (error) {
+          done(error);
+        }
+      };
+
+      const returnValue = onMessageCallback(message, null, sendResponse);
+      // The releaseLock branch returns true because we send a response asynchronously.
+      expect(returnValue).toBe(true);
+    });
+  });
+
+  describe("injectContentScript (via chrome.scripting.executeScript)", () => {
+    it("should log an error if script injection fails", () => {
+      // Override executeScript to simulate a failure.
+      chrome.scripting.executeScript.mockImplementation((options, callback) => {
+        // Simulate a failure by setting chrome.runtime.lastError.
+        chrome.runtime.lastError = { message: "Injection failed" };
+        callback();
+      });
+
+      const tab = { id: 1, url: "https://example.com/page" };
+      // Simulate permission granted.
+      chrome.permissions.request.mockImplementation((options, callback) => {
+        callback(true);
+      });
+
+      onClickedCallback(tab);
+
+      expect(console.error).toHaveBeenCalledWith("Script injection failed:", { message: "Injection failed" });
+      // Clear the error for subsequent tests.
+      chrome.runtime.lastError = null;
+    });
+
+    it("should log success when script injection succeeds", () => {
+      const tab = { id: 1, url: "https://example.com/page" };
+      // Simulate permission granted and a successful injection (lastError remains null).
+      chrome.permissions.request.mockImplementation((options, callback) => {
+        callback(true);
+      });
+      chrome.runtime.lastError = null;
+
+      onClickedCallback(tab);
+
+      expect(console.log).toHaveBeenCalledWith("Content script injected into tab", tab.id);
+    });
   });
 });
