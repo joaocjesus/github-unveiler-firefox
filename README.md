@@ -2,14 +2,7 @@
 
 A Chrome extension to replace GitHub usernames with display names in references and links on GitHub pages.
 
-Has not been extensively tested. Use at your own risk. Not currently available in the Chrome Web Store. 
-
-## Installation
-
-1. Download a copy of this repository.
-2. Open Chrome and navigate to chrome://extensions.
-3. Enable "Developer mode" (if it isn’t already).
-4. Click Load unpacked and select this repository's folder.
+Available on the Chrome Web Store: https://chromewebstore.google.com/detail/github-unveiler/nepdghlcapkfgnficpnefibalbhjofaa
 
 ## Usage
 
@@ -19,3 +12,11 @@ Has not been extensively tested. Use at your own risk. Not currently available i
 3. Allow access.
    - ![image](https://github.com/user-attachments/assets/153edcf3-aa4a-4d80-a43b-8061c6d1181d)
 
+## Developer Installation
+
+If you'd like to tinker with it yourself, use these instructions. 
+
+1. Download a copy of this repository.
+2. Open Chrome and navigate to chrome://extensions.
+3. Enable "Developer mode" (if it isn’t already).
+4. Click Load unpacked and select this repository's folder.
