@@ -45,6 +45,34 @@ describe("content.js", () => {
 
     // --- Set up global fetch mock ---
     global.fetch = jest.fn((url) => {
+      // Use different responses based on the URL.
+      if (url.includes("/testuser2")) {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              '<html><body><div class="vcard-fullname">Test User 2</div></body></html>'
+            ),
+        });
+      }
+      if (url.includes("/octouser")) {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              '<html><body><div class="vcard-fullname">Test Octo</div></body></html>'
+            ),
+        });
+      }
+      if (url.includes("/user123")) {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              '<html><body><div class="vcard-fullname">Test User 123</div></body></html>'
+            ),
+        });
+      }
       // Default: simulate a successful fetch returning a profile with "Test User"
       return Promise.resolve({
         ok: true,
@@ -67,7 +95,7 @@ describe("content.js", () => {
     jest.restoreAllMocks();
   });
 
-  test("should fetch and update display name on a valid anchor", async () => {
+  test("should fetch and update display name on a valid anchor with data-hovercard-url", async () => {
     // Create an anchor that qualifies for processing.
     const anchor = document.createElement("a");
     anchor.setAttribute("data-hovercard-url", "/users/testuser");
@@ -77,17 +105,16 @@ describe("content.js", () => {
     // Load content.js (which processes document.body immediately).
     require("../content.js");
 
-    // Wait for asynchronous tasks (fetch, DOM updates) to finish.
+    // Wait for asynchronous tasks to finish.
     await flushPromises();
     await new Promise((r) => setTimeout(r, 0));
 
-    // The update callback (via updateTextNodes) should have replaced occurrences of
-    // "@testuser" with "@Test User" (as returned from our mocked fetch).
+    // Expect occurrences of "@testuser" to be replaced with "@Test User"
     expect(anchor.textContent).toBe("Hello @Test User, welcome!");
   });
 
   test("should fallback to username if fetch fails", async () => {
-    // Simulate a failed fetch (non-OK response).
+    // Simulate a failed fetch.
     global.fetch.mockImplementation(() =>
       Promise.resolve({
         ok: false,
@@ -108,7 +135,7 @@ describe("content.js", () => {
     await flushPromises();
     await new Promise((r) => setTimeout(r, 0));
 
-    // On error, the fallback is to use the username.
+    // On error, the fallback is to use the original username.
     expect(anchor.textContent).toBe("Hello @testuser, welcome!");
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "Error fetching display name for @testuser",
@@ -140,41 +167,73 @@ describe("content.js", () => {
   test("should update new anchors added via MutationObserver", async () => {
     // Load the content script.
     require("../content.js");
-  
+
     // Create a container to ensure the MutationObserver remains attached.
     const container = document.createElement("div");
     document.body.appendChild(container);
-  
+
     // Create a new anchor after the MutationObserver is in place.
     const anchor = document.createElement("a");
     anchor.setAttribute("data-hovercard-url", "/users/testuser2");
     anchor.textContent = "testuser2";
     container.appendChild(anchor);
-  
-    // Modify the fetch mock to return a profile for "testuser2".
-    global.fetch.mockImplementation((url) => {
-      if (url.includes("/testuser2")) {
-        return Promise.resolve({
-          ok: true,
-          text: () =>
-            Promise.resolve(
-              '<html><body><div class="vcard-fullname">Test User 2</div></body></html>'
-            ),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        text: () =>
-          Promise.resolve(
-            '<html><body><div class="vcard-fullname">Test User</div></body></html>'
-          ),
-      });
-    });
-  
+
     // Allow the MutationObserver callback to run.
     await flushPromises();
     await new Promise((r) => setTimeout(r, 50));
-  
+
     expect(anchor.textContent).toBe("Test User 2");
+  });
+
+  test("should extract username from href if data-hovercard-url is missing (handles trailing slash)", async () => {
+    // Create an anchor with only an href attribute (with a trailing slash).
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", "/user123/");
+    anchor.setAttribute("data-octo-click", "hovercard-link-click");
+    anchor.textContent = "Welcome @user123!";
+    document.body.appendChild(anchor);
+
+    require("../content.js");
+
+    await flushPromises();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Expect the username to be fetched from href and replaced accordingly.
+    expect(anchor.textContent).toBe("Welcome @Test User 123!");
+  });
+
+  test("should process anchor with data-octo-click attribute and valid href", async () => {
+    // Create an anchor that qualifies via the data-octo-click attribute.
+    const anchor = document.createElement("a");
+    anchor.setAttribute("data-octo-click", "hovercard-link-click");
+    anchor.setAttribute("href", "/octouser");
+    anchor.textContent = "Hello @octouser!";
+    document.body.appendChild(anchor);
+
+    require("../content.js");
+
+    await flushPromises();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Expect the username extracted from href to be updated.
+    expect(anchor.textContent).toBe("Hello @Test Octo!");
+  });
+
+  test("should skip processing anchor if username contains encoded [bot]", async () => {
+    // Create an anchor with a data-hovercard-url that includes an encoded [bot].
+    const anchor = document.createElement("a");
+    anchor.setAttribute("data-hovercard-url", "/users/test%5Bbot%5D");
+    anchor.textContent = "Hello @test[bot]!";
+    document.body.appendChild(anchor);
+
+    require("../content.js");
+
+    await flushPromises();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Expect no processing; the text remains unchanged.
+    expect(anchor.textContent).toBe("Hello @test[bot]!");
+    // And no lock message should have been sent.
+    expect(global.chrome.runtime.sendMessage).not.toHaveBeenCalled();
   });
 });
