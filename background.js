@@ -3,6 +3,38 @@
 const CACHE_KEY = "githubDisplayNameCache";
 let nameLocks = {};  // key: origin+username, value: true if a fetch is in progress
 let cacheLock = Promise.resolve();
+const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+// Clear cache: remove entries older than 7 days.
+async function clearOldCacheEntries() {
+  const now = Date.now();
+  const cache = await getCache();
+  let updated = false;
+  for (const origin in cache) {
+    const serverCache = cache[origin];
+    for (const username in serverCache) {
+      const entry = serverCache[username];
+      if (now - entry.timestamp > SEVEN_DAYS) {
+        delete serverCache[username];
+        updated = true;
+      }
+    }
+    // Remove origin if its cache is empty.
+    if (Object.keys(serverCache).length === 0) {
+      delete cache[origin];
+      updated = true;
+    }
+  }
+  if (updated) {
+    await setCache(cache);
+    console.log("Cleared old cache entries");
+  }
+}
+
+// Invoke cache clearing when the background script loads.
+clearOldCacheEntries().catch((err) => {
+  console.error("Error clearing old cache entries:", err);
+});
 
 // --- Browser Action & Content Script Injection ---
 
@@ -44,7 +76,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     } catch (e) {
       return;
     }
-
     const originPattern = `${url.protocol}//${url.hostname}/*`;
     chrome.permissions.contains({ origins: [originPattern] }, (hasPermission) => {
       if (hasPermission) {
@@ -74,7 +105,7 @@ function injectContentScript(tabId) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "acquireLock") {
-    // Only one fetch per origin+username
+    // Only one fetch per origin+username.
     const key = message.origin + message.username;
     if (!nameLocks[key]) {
       nameLocks[key] = true;

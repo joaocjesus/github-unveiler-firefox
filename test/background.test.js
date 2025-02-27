@@ -9,7 +9,7 @@ describe("background.js", () => {
   let fakeStorage;
 
   beforeEach(() => {
-    // Reset modules so that background.js re-registers its listeners with our mocks.
+    // Reset modules so that background.js re‑registers its listeners with our mocks.
     jest.resetModules();
 
     // Create an in-memory storage for chrome.storage.local.
@@ -68,7 +68,8 @@ describe("background.js", () => {
     jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(console, "error").mockImplementation(() => {});
 
-    // Require the background script (which immediately registers its event listeners).
+    // Require the background script (which immediately registers its event listeners
+    // and calls clearOldCacheEntries).
     require("../background.js");
   });
 
@@ -281,6 +282,33 @@ describe("background.js", () => {
       onClickedCallback(tab);
 
       expect(console.log).toHaveBeenCalledWith("Content script injected into tab", tab.id);
+    });
+  });
+
+  describe("Cache clearing on load", () => {
+    it("should remove cache entries older than 7 days", async () => {
+      // Set up fakeStorage with one old entry and one new entry.
+      const now = Date.now();
+      fakeStorage[CACHE_KEY] = {
+        "https://example.com": {
+          oldUser: { displayName: "Old", timestamp: now - (8 * 24 * 60 * 60 * 1000) },
+          newUser: { displayName: "New", timestamp: now - (1 * 24 * 60 * 60 * 1000) },
+        },
+      };
+
+      // Reset modules and require background.js so that clearOldCacheEntries runs.
+      jest.resetModules();
+      require("../background.js");
+
+      // Wait briefly for the asynchronous clearOldCacheEntries() to finish.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const updatedCache = fakeStorage[CACHE_KEY];
+      expect(updatedCache).toBeDefined();
+      expect(updatedCache["https://example.com"]).toBeDefined();
+      expect(updatedCache["https://example.com"].oldUser).toBeUndefined();
+      expect(updatedCache["https://example.com"].newUser).toBeDefined();
+      expect(console.log).toHaveBeenCalledWith("Cleared old cache entries");
     });
   });
 });

@@ -65,15 +65,11 @@
       return;
     }
     try {
-      const now = Date.now();
-      const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
-
-      // Check cache first.
       let cache = await getCache();
       const serverCache = cache[location.hostname] || {};
       let entry = serverCache[username];
 
-      if (entry && (now - entry.timestamp < SEVEN_DAYS)) {
+      if (entry) {
         displayNames[username] = entry.displayName;
         updateElements(username);
         return;
@@ -122,7 +118,7 @@
           let cache = await getCache();
           const serverCache = cache[location.hostname] || {};
           let entry = serverCache[username];
-          if (entry && (Date.now() - entry.timestamp < SEVEN_DAYS)) {
+          if (entry) {
             displayNames[username] = entry.displayName;
             updateElements(username);
             return;
@@ -170,26 +166,23 @@
         }
       }
 
-      // Extract the username
+      // Extract the username.
       const username = getUsername(anchor);
       if (!username) return;
-
 
       // If the display name is already available, update immediately; otherwise, fetch it.
       if (displayNames[username]) {
         updateTextNodes(anchor, username, displayNames[username]);
       } else {
-        // Register a callback to update the anchor's descendant text nodes once the display name is available.
         registerElement(username, (displayName) => {
           updateTextNodes(anchor, username, displayName);
         });
-
         fetchDisplayName(username);
       }
     });
   }
 
-  // Get the username from the anchor tag, preferring the data-hovercard-url to the href
+  // Get the username from the anchor tag, preferring the data-hovercard-url to the href.
   function getUsername(anchor) {
     const hover = anchor.getAttribute("data-hovercard-url");
     const href = anchor.getAttribute("href");
@@ -197,7 +190,7 @@
       const match = hover.match(/^\/users\/((?!.*%5Bbot%5D)[^\/?]+)/);
       if (match) return match[1];
     }
-    else if (href){
+    else if (href) {
       const match = href.match(/\/((?!.*%5Bbot%5D)[^\/?]+)\/?$/);
       if (match) return match[1];
     }
