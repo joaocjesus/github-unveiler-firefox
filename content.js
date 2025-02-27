@@ -183,7 +183,7 @@
         registerElement(username, (displayName) => {
           updateTextNodes(anchor, username, displayName);
         });
-        
+
         fetchDisplayName(username);
       }
     });
@@ -198,7 +198,7 @@
       if (match) return match[1];
     }
     else if (href){
-      const match = href.match(/\/((?!.*%5Bbot%5D)[^\/?]+)$/);
+      const match = href.match(/\/((?!.*%5Bbot%5D)[^\/?]+)\/?$/);
       if (match) return match[1];
     }
     return;
