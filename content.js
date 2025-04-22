@@ -24,11 +24,18 @@
     elementsByUsername[username].push(updateCallback);
   }
 
-  // Call all registered callbacks for a username.
+  /**
+   * Call all registered callbacks for a username once, then clear them out.
+   */
   function updateElements(username) {
-    if (!elementsByUsername[username]) return;
-    const name = displayNames[username] || username; // fallback is the username
-    elementsByUsername[username].forEach((cb) => {
+    const callbacks = elementsByUsername[username];
+    if (!callbacks) return;
+
+    const name = displayNames[username] || username;
+    // Ensure we only run each callback a single time
+    delete elementsByUsername[username];
+
+    callbacks.forEach((cb) => {
       try {
         cb(name);
       } catch (e) {
@@ -38,19 +45,31 @@
   }
 
   /**
-   * Replaces all occurrences of the username (with an optional "@" prefix) in the text nodes
-   * under the given element with the provided displayName.
+   * Walk all text nodes under `element`, replace @username or username tokens
+   * with the displayName—but skip any node that already contains the full displayName.
    */
   function updateTextNodes(element, username, displayName) {
-    // Escape the username for use in a regex.
-    const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Create a regex that matches either "username" or "@username" as a whole word.
-    const regex = new RegExp("\\b@?" + escapedUsername + "\\b", "g");
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+    // Escape special regex chars in the username
+    const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Match standalone @username or username (doesn't run inside other words)
+    const regex = new RegExp(`(?<!\\w)@?${escapedUsername}(?!\\w)`, "g");
+
+    const walker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    );
     let node;
     while ((node = walker.nextNode())) {
-      if (regex.test(node.textContent)) {
-        node.textContent = node.textContent.replace(regex, displayName);
+      // If we've already inserted the full displayName here, skip it
+      if (node.textContent.includes(displayName)) continue;
+
+      const updated = node.textContent.replace(regex, (match) =>
+        match.startsWith("@") ? `@${displayName}` : displayName
+      );
+      if (updated !== node.textContent) {
+        node.textContent = updated;
       }
     }
   }

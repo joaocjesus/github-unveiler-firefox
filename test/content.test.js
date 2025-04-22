@@ -236,4 +236,39 @@ describe("content.js", () => {
     // And no lock message should have been sent.
     expect(global.chrome.runtime.sendMessage).not.toHaveBeenCalled();
   });
+
+  test('running the script twice on the same anchor duplicates inner username', async () => {
+    // 1) Stub fetch to return Paul "TBBle" Hampson
+    global.fetch.mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            '<html><body><div class="vcard-fullname">Paul "TBBle" Hampson</div></body></html>'
+          ),
+      })
+    );
+  
+    // 2) Create an anchor to be processed
+    const anchor = document.createElement('a');
+    anchor.setAttribute('data-hovercard-url', '/users/TBBle');
+    anchor.textContent = 'Hello @TBBle!';
+    document.body.appendChild(anchor);
+  
+    // 3) First load – should replace cleanly once
+    require('../content.js');
+    await flushPromises();
+    await new Promise(r => setTimeout(r, 0));
+    expect(anchor.textContent).toBe('Hello @Paul "TBBle" Hampson!');
+  
+    // 4) Reset modules & load again on the same DOM
+    jest.resetModules();
+    require('../content.js');
+    await flushPromises();
+    await new Promise(r => setTimeout(r, 0));
+  
+    // 5) Confirm no runaway duplication
+    expect(anchor.textContent).toBe('Hello @Paul "TBBle" Hampson!');
+  });
+  
 });
