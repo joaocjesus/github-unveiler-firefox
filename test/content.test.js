@@ -44,42 +44,31 @@ describe("content.js", () => {
     };
 
     // --- Set up global fetch mock ---
+    const mockDisplayNames = {
+      'testuser': 'Test User', // Default from previous tests
+      'testuser2': 'Test User 2',
+      'octouser': 'Test Octo',
+      'user123': 'Test User 123',
+      'TBBle': 'Paul "TBBle" Hampson',
+      'projectUser1': 'Project User One',
+      'projectUser2': 'Project User Two',
+      'projectUser3': 'Project User Three',
+      // Add more as needed for new tests
+    };
+
     global.fetch = jest.fn((url) => {
-      // Use different responses based on the URL.
-      if (url.includes("/testuser2")) {
+      const username = url.substring(url.lastIndexOf('/') + 1);
+      const displayName = mockDisplayNames[username];
+
+      if (displayName) {
         return Promise.resolve({
           ok: true,
-          text: () =>
-            Promise.resolve(
-              '<html><body><div class="vcard-fullname">Test User 2</div></body></html>'
-            ),
+          text: () => Promise.resolve(`<html><body><div class="vcard-fullname">${displayName}</div></body></html>`),
         });
       }
-      if (url.includes("/octouser")) {
-        return Promise.resolve({
-          ok: true,
-          text: () =>
-            Promise.resolve(
-              '<html><body><div class="vcard-fullname">Test Octo</div></body></html>'
-            ),
-        });
-      }
-      if (url.includes("/user123")) {
-        return Promise.resolve({
-          ok: true,
-          text: () =>
-            Promise.resolve(
-              '<html><body><div class="vcard-fullname">Test User 123</div></body></html>'
-            ),
-        });
-      }
-      // Default: simulate a successful fetch returning a profile with "Test User"
+      // Fallback for any username not in mockDisplayNames, or if specific error simulation is needed
       return Promise.resolve({
-        ok: true,
-        text: () =>
-          Promise.resolve(
-            '<html><body><div class="vcard-fullname">Test User</div></body></html>'
-          ),
+        ok: false, status: 404, text: () => Promise.resolve("Not Found"),
       });
     });
 
@@ -92,7 +81,15 @@ describe("content.js", () => {
   });
 
   afterEach(() => {
+    // Clear mock call counts
+    global.fetch.mockClear();
+    if (global.chrome && global.chrome.runtime && global.chrome.runtime.sendMessage) {
+      global.chrome.runtime.sendMessage.mockClear();
+    }
+    // Restore any spied-on objects
     jest.restoreAllMocks();
+    // Clear the document body
+    document.body.innerHTML = "";
   });
 
   test("should fetch and update display name on a valid anchor with data-hovercard-url", async () => {
@@ -111,17 +108,29 @@ describe("content.js", () => {
 
     // Expect occurrences of "@testuser" to be replaced with "@Test User"
     expect(anchor.textContent).toBe("Hello @Test User, welcome!");
+    expect(anchor.getAttribute('data-ghu-processed')).toBe('true');
   });
 
   test("should fallback to username if fetch fails", async () => {
-    // Simulate a failed fetch.
-    global.fetch.mockImplementation(() =>
-      Promise.resolve({
+    // Simulate a failed fetch specifically for 'testuser' for this test
+    // Simulate a failed fetch specifically for 'testuser' for this test
+    // This completely replaces the global.fetch for the scope of this test.
+    global.fetch = jest.fn((url) => {
+      if (url.includes('/testuser')) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          text: () => Promise.resolve("Not Found"),
+        });
+      }
+      // For any other URL, also return an error or an unexpected response
+      // to ensure only the '/testuser' path is relevant to what this test is trying to achieve.
+      return Promise.resolve({
         ok: false,
-        status: 404,
-        text: () => Promise.resolve("Not Found"),
-      })
-    );
+        status: 500, // Different status to distinguish
+        text: () => Promise.resolve("Unexpected call in this test's fetch mock")
+      });
+    });
 
     const consoleErrorSpy = jest.spyOn(console, "error");
 
@@ -129,6 +138,28 @@ describe("content.js", () => {
     anchor.setAttribute("data-hovercard-url", "/users/testuser");
     anchor.textContent = "Hello @testuser, welcome!";
     document.body.appendChild(anchor);
+
+    // Check if a pre-existing observer (from a previous test's content.js) might process this first
+    await flushPromises();
+    await new Promise(r => setTimeout(r, 50)); // Allow MO time
+
+    // If it's already "Test User", then a prior observer + the beforeEach fetch mock is the issue.
+    // This attempts to counteract that for this specific test.
+    if (anchor.textContent === "Hello @Test User, welcome!") {
+      // console.error("Fallback Test: Anchor text was ALREADY 'Test User'. Resetting for this test's content.js.");
+      anchor.textContent = "Hello @testuser, welcome!"; // Reset text
+      if (anchor.hasAttribute('data-ghu-processed')) {
+        anchor.removeAttribute('data-ghu-processed'); // Remove marker
+      }
+    } else if (anchor.textContent !== "Hello @testuser, welcome!") {
+      // If it's something else entirely, that's an unexpected state.
+      // console.error(`Fallback Test: Anchor text was UNEXPECTED: ${anchor.textContent}. Resetting.`);
+      anchor.textContent = "Hello @testuser, welcome!";
+      if (anchor.hasAttribute('data-ghu-processed')) {
+        anchor.removeAttribute('data-ghu-processed');
+      }
+    }
+
 
     require("../content.js");
 
@@ -183,6 +214,7 @@ describe("content.js", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(anchor.textContent).toBe("Test User 2");
+    expect(anchor.getAttribute('data-ghu-processed')).toBe('true');
   });
 
   test("should extract username from href if data-hovercard-url is missing (handles trailing slash)", async () => {
@@ -200,6 +232,7 @@ describe("content.js", () => {
 
     // Expect the username to be fetched from href and replaced accordingly.
     expect(anchor.textContent).toBe("Welcome @Test User 123!");
+    expect(anchor.getAttribute('data-ghu-processed')).toBe('true');
   });
 
   test("should process anchor with data-octo-click attribute and valid href", async () => {
@@ -217,6 +250,7 @@ describe("content.js", () => {
 
     // Expect the username extracted from href to be updated.
     expect(anchor.textContent).toBe("Hello @Test Octo!");
+    expect(anchor.getAttribute('data-ghu-processed')).toBe('true');
   });
 
   test("should skip processing anchor if username contains encoded [bot]", async () => {
@@ -239,7 +273,8 @@ describe("content.js", () => {
 
   test('running the script twice on the same anchor duplicates inner username', async () => {
     // 1) Stub fetch to return Paul "TBBle" Hampson
-    global.fetch.mockImplementation(() =>
+    // Ensure this mock is a jest.fn() so its calls can be tracked if needed for this specific test.
+    const tbbleFetchMock = jest.fn(() =>
       Promise.resolve({
         ok: true,
         text: () =>
@@ -248,6 +283,7 @@ describe("content.js", () => {
           ),
       })
     );
+    global.fetch = tbbleFetchMock;
   
     // 2) Create an anchor to be processed
     const anchor = document.createElement('a');
@@ -260,15 +296,187 @@ describe("content.js", () => {
     await flushPromises();
     await new Promise(r => setTimeout(r, 0));
     expect(anchor.textContent).toBe('Hello @Paul "TBBle" Hampson!');
-  
+    expect(anchor.getAttribute('data-ghu-processed')).toBe('true'); // Check marker
+
+    const fetchCallsBeforeSecondLoad = tbbleFetchMock.mock.calls.length;
+    const sendMessageCallsBeforeSecondLoad = global.chrome.runtime.sendMessage.mock.calls.length;
+
     // 4) Reset modules & load again on the same DOM
     jest.resetModules();
+
+    // Re-establish necessary mocks after reset
+    global.fetch = tbbleFetchMock; // Crucial: re-use the same mock instance for fetch
+
+    // Store the original sendMessage mock implementation to re-apply it if necessary
+    // or create a new one for the second pass. For this test, a fresh spy is fine.
+    const newSendMessageMock = jest.fn(msg => {
+      if (msg.type === "acquireLock") return Promise.resolve({ acquired: true });
+      if (msg.type === "releaseLock") return Promise.resolve({ success: true });
+      return Promise.resolve({});
+    });
+
+    global.chrome = {
+      storage: {
+        local: {
+          get: jest.fn((keys, callback) => {
+            // Simulate cache for TBBle already exists from first run if needed,
+            // or empty if we want to test re-fetch attempt (which should be skipped by marker)
+            // For this test, the marker should prevent even a cache lookup for TBBle for re-processing.
+            // The displayNames map in content.js will be empty after resetModules.
+            callback({ githubDisplayNameCache: { /* simulate TBBle potentially cached by background */ } });
+          }),
+          set: jest.fn((obj, callback) => {
+            callback();
+          }),
+        },
+      },
+      runtime: {
+        sendMessage: newSendMessageMock,
+      },
+    };
+    // location.hostname should persist, but ensure if issues: global.location = { hostname: "github.com" };
+
+
     require('../content.js');
     await flushPromises();
     await new Promise(r => setTimeout(r, 0));
   
     // 5) Confirm no runaway duplication
     expect(anchor.textContent).toBe('Hello @Paul "TBBle" Hampson!');
+  });
+
+  describe("GitHub Projects Elements", () => {
+    test("should update username in h3.slicer-items-module__title--EMqA1", async () => {
+      const h3 = document.createElement("h3");
+      h3.className = "slicer-items-module__title--EMqA1";
+      h3.textContent = "projectUser1";
+      document.body.appendChild(h3);
+
+      require("../content.js");
+      await flushPromises();
+
+      expect(h3.textContent).toBe("Project User One");
+      expect(h3.getAttribute('data-ghu-processed')).toBe('true');
+    });
+
+    test("should update username in img[data-testid='github-avatar'][alt]", async () => {
+      const img = document.createElement("img");
+      img.setAttribute("data-testid", "github-avatar");
+      img.setAttribute("alt", "projectUser2");
+      document.body.appendChild(img);
+
+      require("../content.js");
+      await flushPromises();
+
+      expect(img.getAttribute("alt")).toBe("Project User Two");
+      expect(img.getAttribute('data-ghu-processed')).toBe('true');
+    });
+
+    test("should update username in span[aria-label]", async () => {
+      const span = document.createElement("span");
+      span.setAttribute("aria-label", "projectUser3");
+      document.body.appendChild(span);
+
+      require("../content.js");
+      await flushPromises();
+
+      expect(span.getAttribute("aria-label")).toBe("Project User Three");
+      expect(span.getAttribute('data-ghu-processed')).toBe('true');
+    });
+
+    test("should update dynamically added project H3 element (MutationObserver)", async () => {
+      require("../content.js"); // Load content.js first to set up observer
+
+      const h3 = document.createElement("h3");
+      h3.className = "slicer-items-module__title--EMqA1";
+      h3.textContent = "projectUser1";
+      document.body.appendChild(h3);
+
+      await flushPromises();
+      // Additional small delay for MutationObserver, similar to existing test
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(h3.textContent).toBe("Project User One");
+      expect(h3.getAttribute('data-ghu-processed')).toBe('true');
+    });
+
+    test("should not process 'No Assignees' and not call fetch", async () => {
+      const h3 = document.createElement("h3");
+      h3.className = "slicer-items-module__title--EMqA1";
+      h3.textContent = "No Assignees";
+      document.body.appendChild(h3);
+
+      // Spy on fetch specifically for this test, though it shouldn't be called for "No Assignees"
+      const fetchSpy = global.fetch;
+
+      require("../content.js");
+      await flushPromises();
+
+      expect(h3.textContent).toBe("No Assignees");
+      expect(h3.hasAttribute('data-ghu-processed')).toBe(false);
+
+      // Check that fetch was not called for "No Assignees"
+      // The easiest way is to ensure no call to fetch had '/No%20Assignees' (URL encoded space)
+      // or just check call counts if no other fetch is expected.
+      // Given the setup, fetch might be called for other elements if tests are run in parallel or share state.
+      // So, more specific check:
+      let calledForNoAssignees = false;
+      for (const call of fetchSpy.mock.calls) {
+        if (call[0].includes("/No%20Assignees") || call[0].includes("/No Assignees")) {
+          calledForNoAssignees = true;
+          break;
+        }
+      }
+      expect(calledForNoAssignees).toBe(false);
+      // Also ensure sendMessage was not called for 'No Assignees' for lock acquisition
+      let sendMessageForNoAssignees = false;
+      for (const call of global.chrome.runtime.sendMessage.mock.calls) {
+        if (call[0].type === 'acquireLock' && call[0].username === 'No Assignees') {
+          sendMessageForNoAssignees = true;
+          break;
+        }
+      }
+      expect(sendMessageForNoAssignees).toBe(false);
+    });
+  });
+
+  describe("Idempotency and Marker Tests", () => {
+    test("data-ghu-processed attribute should prevent re-processing", async () => {
+      const h3 = document.createElement("h3");
+      h3.className = "slicer-items-module__title--EMqA1";
+      h3.textContent = "projectUser1"; // This would normally be processed
+      h3.setAttribute("data-ghu-processed", "true"); // Mark as already processed
+      document.body.appendChild(h3);
+
+      const fetchSpy = global.fetch;
+      const sendMessageSpy = global.chrome.runtime.sendMessage;
+
+      require("../content.js");
+      await flushPromises();
+
+      // Content should remain unchanged because it was marked as processed
+      expect(h3.textContent).toBe("projectUser1");
+
+      // Verify fetch was not called for this user because it was skipped
+      let calledForProjectUser1 = false;
+      for (const call of fetchSpy.mock.calls) {
+        if (call[0].includes("/projectUser1")) {
+          calledForProjectUser1 = true;
+          break;
+        }
+      }
+      expect(calledForProjectUser1).toBe(false);
+
+      // Verify sendMessage (for lock) was not called for this user
+      let sendMessageForProjectUser1 = false;
+      for (const call of sendMessageSpy.mock.calls) {
+        if (call[0].type === 'acquireLock' && call[0].username === 'projectUser1') {
+          sendMessageForProjectUser1 = true;
+          break;
+        }
+      }
+      expect(sendMessageForProjectUser1).toBe(false);
+    });
   });
   
 });
