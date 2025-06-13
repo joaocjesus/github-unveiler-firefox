@@ -190,59 +190,92 @@ function updateElementDirectly(element, username, displayName) {
   return changed;
 }
 
-// Function to process project elements
 function processProjectElements(root) {
-  if (!(root instanceof Element)) return; // Ensure root is an Element
+  if (!(root instanceof Element)) return;
 
-  const h3Selector = 'h3.slicer-items-module__title--EMqA1';
-  const imgSelector = 'img[data-testid="github-avatar"][alt]';
-  const spanSelector = 'span[aria-label]';
+  const avatarSelector = 'img[data-testid="github-avatar"]';
+  let avatarsToProcess = [];
 
-  let elementsToProcess = [];
-
-  // Check if root itself matches any of the selectors
-  if (root.matches(h3Selector) || root.matches(imgSelector) || root.matches(spanSelector)) {
-    elementsToProcess.push(root);
+  if (root.matches(avatarSelector)) {
+    avatarsToProcess.push(root);
   }
+  // Deduplicate if root itself is an avatar and also found by querySelectorAll
+  const descendantAvatars = Array.from(root.querySelectorAll(avatarSelector));
+  avatarsToProcess = Array.from(new Set([...avatarsToProcess, ...descendantAvatars]));
 
-  // Add descendants
-  elementsToProcess.push(...Array.from(root.querySelectorAll(`${h3Selector}, ${imgSelector}, ${spanSelector}`)));
+  avatarsToProcess.forEach(avatarElement => {
+    let h3Element = null;
 
-  // Deduplication is not strictly necessary due to PROCESSED_MARKER, but can be done with a Set if preferred for cleanliness.
-  // elementsToProcess = Array.from(new Set(elementsToProcess));
+    // Primary strategy: Traverse based on expected relative structure
+    const iconWrapper = avatarElement.parentElement;
+    const leadingVisualWrapper = iconWrapper ? iconWrapper.parentElement : null;
+    // Check if leadingVisualWrapper is not null and has a next sibling
+    const mainContentWrapper = leadingVisualWrapper && leadingVisualWrapper.nextElementSibling ?
+                                 leadingVisualWrapper.nextElementSibling : null;
 
-  elementsToProcess.forEach(element => {
-    if (element.hasAttribute(PROCESSED_MARKER)) return;
-    let username;
-    if (element.matches(h3Selector)) {
-      username = element.textContent.trim();
-    } else if (element.matches(imgSelector)) {
-      username = element.alt.trim();
-      // Remove "@" prefix if present in alt attribute
-      if (username.startsWith('@')) {
-        username = username.substring(1);
-      }
-    } else if (element.matches(spanSelector)) {
-      username = element.getAttribute('aria-label').trim();
+    if (mainContentWrapper) {
+      // We expect the H3 to be a descendant of mainContentWrapper
+      // Querying for any h1,h2,h3,h4 and taking the first found.
+      // This provides some flexibility if H3 is not always used.
+      h3Element = mainContentWrapper.querySelector('h1, h2, h3, h4, h5, h6');
     }
 
-    // Ignore invalid usernames
-    if (!username || username === "No Assignees" || username === "") {
+    // Fallback strategy: if primary strategy failed, try finding H3 within closest LI
+    if (!h3Element) {
+      const listItemAncestor = avatarElement.closest('li');
+      if (listItemAncestor) {
+        // Query for any h1,h2,h3,h4 and taking the first found within the LI
+        h3Element = listItemAncestor.querySelector('h1, h2, h3, h4, h5, h6');
+      }
+    }
+
+    // Fallback strategy 2: if still no H3, try a broader search within a less specific ancestor
+    // This is a wider net and should be used cautiously.
+    // Go up 3 levels from avatar and search for H3 there.
+    if (!h3Element) {
+        let current = avatarElement;
+        let parentCount = 0;
+        for (let i = 0; i < 3 && current.parentElement; i++) {
+            current = current.parentElement;
+            parentCount++;
+        }
+        // Only proceed if we actually moved up and didn't hit document body/root too early
+        if (parentCount > 0 && current && current !== document.body && current !== document.documentElement) {
+             h3Element = current.querySelector('h1, h2, h3, h4, h5, h6');
+        }
+    }
+
+
+    if (!h3Element) {
+      // console.warn('Could not find a suitable H3 element for avatar:', avatarElement);
       return;
     }
 
-    if (displayNames[username]) {
-      const updated = updateElementDirectly(element, username, displayNames[username]);
-      if (updated) {
-        element.setAttribute(PROCESSED_MARKER, 'true');
+    if (h3Element.hasAttribute(PROCESSED_MARKER)) {
+      return;
+    }
+
+    const username = h3Element.textContent.trim();
+
+    if (!username || username === "No Assignees" || username === "") { // Removed username.includes(' ')
+      // console.log('Skipping invalid or placeholder username (or one with spaces that was previously skipped):', username);
+      return;
+    }
+
+    const processUpdate = (nameToDisplay) => {
+      const h3Updated = updateTextNodes(h3Element, username, nameToDisplay);
+      if (h3Updated) {
+        h3Element.setAttribute(PROCESSED_MARKER, 'true');
       }
+      if (avatarElement.alt !== nameToDisplay) {
+        avatarElement.alt = nameToDisplay;
+      }
+    };
+
+    if (displayNames[username]) {
+      processUpdate(displayNames[username]);
     } else {
-      registerElement(username, () => {
-        const updated = updateElementDirectly(element, username, displayNames[username]);
-        if (updated) {
-          element.setAttribute(PROCESSED_MARKER, 'true');
-        }
-      });
+      registerElement(username, processUpdate);
       fetchDisplayName(username);
     }
   });
