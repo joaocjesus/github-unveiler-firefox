@@ -20,6 +20,10 @@ describe("content.js", () => {
     "Blocked": "User IsBlocked",
     "In Progress": "User IsInProgress",
     "No Status": "User HasNoStatus",
+    'gridUser1': 'Grid User One',
+    'gridUser2': 'Grid User Two',
+    'gridUser3': 'Grid User Three',
+    'boardUser1': 'Board User One',
   };
 
   // Helper function to create the primary DOM structure, moved to a higher scope
@@ -105,6 +109,138 @@ describe("content.js", () => {
     jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(console, "error").mockImplementation(() => {});
   });
+
+  // Helper function to set up DOM for grid cell tests
+  function setupGridCellDOM(usernames, type) {
+    const cell = document.createElement('div');
+    cell.setAttribute('role', 'gridcell');
+    const innerDiv = document.createElement('div'); // Simplified inner structure
+    cell.appendChild(innerDiv);
+
+    if (type === 'single') {
+      if (typeof usernames !== 'string') {
+        throw new Error("For 'single' type, usernames must be a string.");
+      }
+      const userDiv = document.createElement('div');
+      const img = document.createElement('img');
+      img.setAttribute('data-testid', 'github-avatar');
+      img.setAttribute('alt', usernames);
+      img.setAttribute('src', '#'); // Placeholder src
+
+      const usernameSpan = document.createElement('span');
+      usernameSpan.textContent = usernames;
+
+      userDiv.appendChild(img);
+      userDiv.appendChild(usernameSpan);
+      innerDiv.appendChild(userDiv);
+      document.body.appendChild(cell);
+      return { cell, img, usernameSpan };
+
+    } else if (type === 'multi') {
+      if (!Array.isArray(usernames)) {
+        throw new Error("For 'multi' type, usernames must be an array.");
+      }
+
+      const multiUserSpan = document.createElement('span');
+      multiUserSpan.setAttribute('data-avatar-count', usernames.length.toString());
+      const avatarStackBody = document.createElement('div'); // Simulating "Avatar stack body"
+      multiUserSpan.appendChild(avatarStackBody);
+
+      const avatarImgs = [];
+      usernames.forEach(username => {
+        const img = document.createElement('img');
+        img.setAttribute('data-testid', 'github-avatar');
+        img.setAttribute('alt', username);
+        img.setAttribute('src', '#');
+        avatarStackBody.appendChild(img);
+        avatarImgs.push(img);
+      });
+
+      let usernamesText = "";
+      if (usernames.length === 1) {
+        usernamesText = usernames[0];
+      } else if (usernames.length === 2) {
+        usernamesText = `${usernames[0]} and ${usernames[1]}`;
+      } else if (usernames.length > 2) {
+        usernamesText = usernames.slice(0, -1).join(', ') + ', and ' + usernames[usernames.length - 1];
+      }
+
+      const usernamesTextSpan = document.createElement('span');
+      usernamesTextSpan.textContent = usernamesText;
+
+      innerDiv.appendChild(multiUserSpan);
+      innerDiv.appendChild(usernamesTextSpan);
+      document.body.appendChild(cell);
+      return { cell, multiUserSpan, avatarImgs, usernamesTextSpan };
+    } else {
+      throw new Error("Invalid type specified for setupGridCellDOM. Must be 'single' or 'multi'.");
+    }
+  }
+
+  // Helper function to set up DOM for board group header tests
+  function setupBoardGroupHeaderDOM(username) {
+    const container = document.createElement('div');
+    container.className = 'board-group-header-container'; // Outer container
+
+    const innerMimicDiv = document.createElement('div'); // Inner container mimicking the structure
+    container.appendChild(innerMimicDiv);
+
+    const collapseButton = document.createElement('button');
+    collapseButton.textContent = '...'; // Minimal button
+    innerMimicDiv.appendChild(collapseButton);
+
+    const tooltipCollapse = document.createElement('span');
+    tooltipCollapse.setAttribute('popover', 'auto');
+    tooltipCollapse.id = 'tooltip-collapse'; // Static ID for test access
+    tooltipCollapse.textContent = `Collapse group ${username}`;
+    innerMimicDiv.appendChild(tooltipCollapse);
+
+    const headerContentBlock = document.createElement('div');
+    headerContentBlock.className = 'header-content-block'; // Mimics Box-sc-g0xbh4-0 hYSjTM
+    innerMimicDiv.appendChild(headerContentBlock);
+
+    const avatarCountSpan = document.createElement('span');
+    avatarCountSpan.setAttribute('data-avatar-count', '1');
+    headerContentBlock.appendChild(avatarCountSpan);
+
+    const avatarStackBody = document.createElement('div'); // Avatar stack body
+    avatarCountSpan.appendChild(avatarStackBody);
+
+    const avatarImg = document.createElement('img');
+    avatarImg.setAttribute('data-testid', 'github-avatar');
+    avatarImg.setAttribute('alt', username);
+    avatarImg.setAttribute('src', '#'); // Placeholder src
+    avatarStackBody.appendChild(avatarImg);
+
+    const usernameSpan = document.createElement('span');
+    usernameSpan.textContent = username; // Main username span
+    headerContentBlock.appendChild(usernameSpan);
+
+    const countSpan = document.createElement('span');
+    countSpan.textContent = '3'; // Static count for simplicity
+    headerContentBlock.appendChild(countSpan);
+
+    const actionsButton = document.createElement('button');
+    actionsButton.textContent = '...'; // Minimal button
+    innerMimicDiv.appendChild(actionsButton);
+
+    const tooltipActions = document.createElement('span');
+    tooltipActions.setAttribute('popover', 'auto');
+    tooltipActions.id = 'tooltip-actions'; // Static ID for test access
+    tooltipActions.textContent = `Actions for group: ${username}`;
+    innerMimicDiv.appendChild(tooltipActions);
+
+    document.body.appendChild(container);
+
+    return {
+      container,
+      avatarImg,
+      usernameSpan,
+      tooltipCollapse,
+      tooltipActions,
+      headerContentBlock,
+    };
+  }
 
   afterEach(() => {
     // Clear mock call counts
@@ -639,6 +775,237 @@ describe("content.js", () => {
         }
         expect(calledForKeyword).toBe(true);
       });
+    });
+  });
+
+  describe('processSingleUserGridCell', () => {
+    test('Basic Replacement: should update alt and span for a single user', async () => {
+      const { cell, img, usernameSpan } = setupGridCellDOM('gridUser1', 'single');
+      require('../content.js');
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 0)); // Ensure all microtasks and fetch callbacks complete
+
+      expect(img.alt).toBe('@Grid User One'); // As per processSingleUserGridCell logic
+      expect(usernameSpan.textContent).toBe('Grid User One');
+      expect(cell.hasAttribute('data-ghu-processed')).toBe(true);
+    });
+
+    test('Already Processed: should not re-process if data-ghu-processed is true', async () => {
+      const { cell, img, usernameSpan } = setupGridCellDOM('gridUser1', 'single');
+      cell.setAttribute('data-ghu-processed', 'true');
+
+      const fetchSpy = jest.spyOn(global, 'fetch');
+
+      require('../content.js');
+      await flushPromises();
+
+      expect(img.alt).toBe('gridUser1'); // Should remain original
+      expect(usernameSpan.textContent).toBe('gridUser1'); // Should remain original
+
+      // Check if fetch was called for 'gridUser1'
+      let calledForGridUser1 = false;
+      for (const call of fetchSpy.mock.calls) {
+        if (call[0].includes('/gridUser1')) {
+          calledForGridUser1 = true;
+          break;
+        }
+      }
+      expect(calledForGridUser1).toBe(false);
+      fetchSpy.mockRestore();
+    });
+
+    test('Dynamic Addition (MutationObserver): should process dynamically added single user cells', async () => {
+      require('../content.js'); // Load content.js first to set up observer
+
+      // The setupGridCellDOM appends to document.body, which should be observed
+      const { img, usernameSpan } = setupGridCellDOM('gridUser2', 'single');
+
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 50)); // Allow MO time
+
+      expect(img.alt).toBe('@Grid User Two');
+      expect(usernameSpan.textContent).toBe('Grid User Two');
+    });
+
+    test('Username with leading "@": should correctly update alt and span', async () => {
+      const { img, usernameSpan } = setupGridCellDOM('@gridUser1', 'single');
+      // Initial state: img.alt is "@gridUser1", usernameSpan.textContent is "@gridUser1"
+
+      require('../content.js');
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 0));
+
+      // processSingleUserGridCell extracts username as 'gridUser1' from '@gridUser1' alt.
+      // Then, img.alt becomes '@' + 'Grid User One'.
+      expect(img.alt).toBe('@Grid User One');
+      // updateTextNodes replaces '@gridUser1' with '@Grid User One' in the span.
+      expect(usernameSpan.textContent).toBe('@Grid User One');
+    });
+  });
+
+  describe('processMultiUserGridCell', () => {
+    test('Basic Multi-User (3 users): should update alts and text span', async () => {
+      const users = ['gridUser1', 'gridUser2', 'gridUser3'];
+      const { cell, avatarImgs, usernamesTextSpan } = setupGridCellDOM(users, 'multi');
+
+      require('../content.js');
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(avatarImgs[0].alt).toBe('@Grid User One');
+      expect(avatarImgs[1].alt).toBe('@Grid User Two');
+      expect(avatarImgs[2].alt).toBe('@Grid User Three');
+      expect(usernamesTextSpan.textContent).toBe('Grid User One, Grid User Two, and Grid User Three');
+      expect(cell.hasAttribute('data-ghu-processed')).toBe(true);
+    });
+
+    test('Multi-User (2 users): should update alts and text span correctly', async () => {
+      const users = ['gridUser1', 'gridUser2'];
+      const { avatarImgs, usernamesTextSpan } = setupGridCellDOM(users, 'multi');
+
+      require('../content.js');
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(avatarImgs[0].alt).toBe('@Grid User One');
+      expect(avatarImgs[1].alt).toBe('@Grid User Two');
+      expect(usernamesTextSpan.textContent).toBe('Grid User One and Grid User Two');
+    });
+
+    test('Multi-User (1 user in multi-cell structure): should update alt and text span', async () => {
+      const users = ['gridUser1'];
+      const { avatarImgs, usernamesTextSpan } = setupGridCellDOM(users, 'multi');
+
+      require('../content.js');
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(avatarImgs[0].alt).toBe('@Grid User One');
+      expect(usernamesTextSpan.textContent).toBe('Grid User One');
+    });
+
+    test('Already Processed (Multi-User): should not re-process', async () => {
+      const users = ['gridUser1', 'gridUser2'];
+      const { cell, avatarImgs, usernamesTextSpan } = setupGridCellDOM(users, 'multi');
+      cell.setAttribute('data-ghu-processed', 'true');
+
+      const initialAltUser1 = avatarImgs[0].alt;
+      const initialAltUser2 = avatarImgs[1].alt;
+      const initialText = usernamesTextSpan.textContent;
+
+      const fetchSpy = jest.spyOn(global, 'fetch');
+      require('../content.js');
+      await flushPromises();
+
+      expect(avatarImgs[0].alt).toBe(initialAltUser1);
+      expect(avatarImgs[1].alt).toBe(initialAltUser2);
+      expect(usernamesTextSpan.textContent).toBe(initialText);
+
+      let calledForAnyUser = false;
+      for (const call of fetchSpy.mock.calls) {
+        if (users.some(user => call[0].includes(`/${user}`))) {
+          calledForAnyUser = true;
+          break;
+        }
+      }
+      expect(calledForAnyUser).toBe(false);
+      fetchSpy.mockRestore();
+    });
+
+    test('Dynamic Addition (Multi-User): should process dynamically added cells', async () => {
+      require('../content.js'); // Load content.js first
+
+      const users = ['gridUser2', 'gridUser3'];
+      // setupGridCellDOM appends to document.body, which is observed
+      const { avatarImgs, usernamesTextSpan } = setupGridCellDOM(users, 'multi');
+
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 50)); // Allow MO time
+
+      expect(avatarImgs[0].alt).toBe('@Grid User Two');
+      expect(avatarImgs[1].alt).toBe('@Grid User Three');
+      expect(usernamesTextSpan.textContent).toBe('Grid User Two and Grid User Three');
+    });
+  });
+
+  describe('processBoardGroupHeader', () => {
+    test('Basic Replacement: should update avatar, username span, and tooltips', async () => {
+      const { avatarImg, usernameSpan, tooltipCollapse, tooltipActions, headerContentBlock } = setupBoardGroupHeaderDOM('boardUser1');
+      const processedContainer = headerContentBlock.parentElement; // This is innerMimicDiv in the helper
+
+      require('../content.js');
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(avatarImg.alt).toBe('@Board User One');
+      expect(usernameSpan.textContent).toBe('Board User One');
+      expect(tooltipCollapse.textContent).toBe('Collapse group Board User One');
+      expect(tooltipActions.textContent).toBe('Actions for group: Board User One');
+      expect(processedContainer.hasAttribute('data-ghu-processed')).toBe(true);
+    });
+
+    test('Already Processed: should not re-process if container is marked', async () => {
+      const { avatarImg, usernameSpan, tooltipCollapse, tooltipActions, headerContentBlock } = setupBoardGroupHeaderDOM('boardUser1');
+      const processedContainer = headerContentBlock.parentElement;
+      processedContainer.setAttribute('data-ghu-processed', 'true');
+
+      const originalAlt = avatarImg.alt;
+      const originalUsernameText = usernameSpan.textContent;
+      const originalCollapseTooltip = tooltipCollapse.textContent;
+      const originalActionsTooltip = tooltipActions.textContent;
+
+      const fetchSpy = jest.spyOn(global, 'fetch');
+      require('../content.js');
+      await flushPromises();
+
+      expect(avatarImg.alt).toBe(originalAlt);
+      expect(usernameSpan.textContent).toBe(originalUsernameText);
+      expect(tooltipCollapse.textContent).toBe(originalCollapseTooltip);
+      expect(tooltipActions.textContent).toBe(originalActionsTooltip);
+
+      let calledForBoardUser1 = false;
+      for (const call of fetchSpy.mock.calls) {
+        if (call[0].includes('/boardUser1')) {
+          calledForBoardUser1 = true;
+          break;
+        }
+      }
+      expect(calledForBoardUser1).toBe(false);
+      fetchSpy.mockRestore();
+    });
+
+    test('Dynamic Addition: should process dynamically added board group headers', async () => {
+      require('../content.js'); // Load content.js first
+
+      // setupBoardGroupHeaderDOM appends to document.body, which is observed
+      const { avatarImg, usernameSpan, tooltipCollapse, tooltipActions, headerContentBlock } = setupBoardGroupHeaderDOM('boardUser1');
+      const processedContainer = headerContentBlock.parentElement;
+
+
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 50)); // Allow MO time
+
+      expect(avatarImg.alt).toBe('@Board User One');
+      expect(usernameSpan.textContent).toBe('Board User One');
+      expect(tooltipCollapse.textContent).toBe('Collapse group Board User One');
+      expect(tooltipActions.textContent).toBe('Actions for group: Board User One');
+      expect(processedContainer.hasAttribute('data-ghu-processed')).toBe(true);
+    });
+
+    test('Tooltip Not Updated if Username Absent: only relevant tooltips change', async () => {
+      const { avatarImg, usernameSpan, tooltipCollapse, tooltipActions } = setupBoardGroupHeaderDOM('boardUser1');
+
+      const originalCollapseText = "Collapse group someOtherText";
+      tooltipCollapse.textContent = originalCollapseText; // Username 'boardUser1' is not in this tooltip
+
+      require('../content.js');
+      await flushPromises();
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(avatarImg.alt).toBe('@Board User One');
+      expect(usernameSpan.textContent).toBe('Board User One');
+      expect(tooltipCollapse.textContent).toBe(originalCollapseText); // Should remain unchanged
+      expect(tooltipActions.textContent).toBe('Actions for group: Board User One'); // Should be updated
     });
   });
 });

@@ -16,6 +16,207 @@
     });
   }
 
+  function processBoardGroupHeader(root) {
+    if (!(root instanceof Element)) return;
+
+    // Find potential "header content blocks". This selector looks for a div that directly contains
+    // a span with data-avatar-count, which itself contains the avatar image,
+    // and that span is immediately followed by another span (expected to be the username text).
+    const headerContentBlocks = root.querySelectorAll('div > span[data-avatar-count] + span');
+
+    headerContentBlocks.forEach(usernameTextSpan => {
+      const avatarCountSpan = usernameTextSpan.previousElementSibling; // This is the span[data-avatar-count]
+      if (!avatarCountSpan || !avatarCountSpan.hasAttribute('data-avatar-count')) return;
+
+      const avatarImg = avatarCountSpan.querySelector('img[data-testid="github-avatar"]');
+      if (!avatarImg) return;
+
+      // The "header content block" is likely the parent of avatarCountSpan and usernameTextSpan
+      const headerContentBlock = avatarCountSpan.parentElement;
+      if (!headerContentBlock || headerContentBlock.tagName !== 'DIV') return;
+
+      // Determine the main container to mark as processed.
+      // This might be the headerContentBlock itself, or a specific parent.
+      // For project boards, it's often a few levels up, e.g., div.board-view-group-header or similar.
+      // Let's try to find a parent that looks like a group container.
+      // A common structure is <div class="board-view-group"> -> <div class="board-view-group-header"> -> <div class="board-view-group-header-content">
+      // We are starting from headerContentBlock, trying to find board-view-group-header or similar.
+      // For now, let's assume the headerContentBlock's parent is a good candidate for the PROCESSED_MARKER.
+      // This might need refinement based on actual DOM.
+      const groupHeaderContainer = headerContentBlock.parentElement;
+      if (!groupHeaderContainer || groupHeaderContainer.hasAttribute(PROCESSED_MARKER)) {
+        // If no suitable parent or already processed, skip.
+        // If groupHeaderContainer is null, it means headerContentBlock has no parent, which is unlikely for valid elements.
+        // If it IS processed, we skip. If it's the headerContentBlock itself we want to mark, adjust accordingly.
+        // For safety, if there's no clear parent to mark, we could mark headerContentBlock.
+        // However, the instruction implies a "main group header container".
+         if (headerContentBlock.hasAttribute(PROCESSED_MARKER)) return; // Check headerContentBlock if parent logic is too broad
+         // If no distinct groupHeaderContainer identified to mark, consider not processing or logging.
+         // For now, if groupHeaderContainer is invalid, we will skip by processing headerContentBlock directly and marking it.
+         if (!groupHeaderContainer) { // If headerContentBlock has no parent
+            if (headerContentBlock.hasAttribute(PROCESSED_MARKER)) return;
+            // proceed with headerContentBlock as the item to mark
+         } else if (groupHeaderContainer.hasAttribute(PROCESSED_MARKER)) {
+            return; // Already processed the designated container
+         }
+
+      }
+
+      const username = avatarImg.alt ? avatarImg.alt.replace('@', '').trim() : null;
+      if (!username) return;
+
+      // Identify tooltip spans. These are often siblings to the headerContentBlock or its parent (groupHeaderContainer).
+      const tooltipSpans = [];
+      const searchContextForTooltips = groupHeaderContainer || headerContentBlock; // Prefer parent if available
+
+      if (searchContextForTooltips.parentElement) {
+          const potentialTooltips = Array.from(searchContextForTooltips.parentElement.querySelectorAll('span[popover="auto"]'));
+          potentialTooltips.forEach(tip => {
+              const text = tip.textContent.toLowerCase();
+              // More specific checks for tooltip content to associate them correctly
+              // Ensure the tooltip text not only contains the username but is also relevant to the group.
+              if ((text.startsWith("collapse group") || text.startsWith("actions for group")) && text.includes(username.toLowerCase())) {
+                  tooltipSpans.push(tip);
+              }
+          });
+      }
+
+
+      const processUpdate = (displayName) => {
+        if (avatarImg.alt !== `@${displayName}`) {
+          avatarImg.alt = `@${displayName}`;
+        }
+        updateTextNodes(usernameTextSpan, username, displayName);
+
+        tooltipSpans.forEach(tooltipSpan => {
+          // Replace username in tooltip text. Be careful with case sensitivity if needed.
+          // Using a regex for replacement is safer.
+          const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const regex = new RegExp(escapedUsername, "gi"); // 'g' for global, 'i' for case-insensitive
+
+          // Only update if the username is actually found (avoids issues if structure changes)
+          if (tooltipSpan.textContent.match(regex)) {
+             tooltipSpan.textContent = tooltipSpan.textContent.replace(regex, displayName);
+          }
+        });
+
+        // Mark as processed
+        const containerToMark = groupHeaderContainer || headerContentBlock;
+        containerToMark.setAttribute(PROCESSED_MARKER, 'true');
+      };
+
+      if (displayNames[username]) {
+        processUpdate(displayNames[username]);
+      } else {
+        registerElement(username, processUpdate);
+        fetchDisplayName(username);
+      }
+    });
+  }
+
+  function processMultiUserGridCell(root) {
+    if (!(root instanceof Element)) return;
+
+    let cellsToProcess = [];
+    if (root.matches('div[role="gridcell"]')) {
+      cellsToProcess.push(root);
+    }
+    cellsToProcess.push(...Array.from(root.querySelectorAll('div[role="gridcell"]')));
+    const uniqueCells = Array.from(new Set(cellsToProcess));
+
+    uniqueCells.forEach(cell => {
+      if (cell.hasAttribute(PROCESSED_MARKER)) {
+        return;
+      }
+
+      const multiUserSpan = cell.querySelector('span[data-avatar-count]');
+      if (!multiUserSpan) {
+        return;
+      }
+
+      const avatarImgs = Array.from(multiUserSpan.querySelectorAll('img[data-testid="github-avatar"]'));
+      if (avatarImgs.length === 0) {
+        return;
+      }
+
+      // Try to find the sibling span that contains the list of usernames.
+      // This can be tricky. A common pattern is that it's an immediate sibling.
+      let usernamesTextSpan = multiUserSpan.nextElementSibling;
+      if (!usernamesTextSpan || usernamesTextSpan.tagName !== 'SPAN') {
+        // Fallback: sometimes it might be wrapped in another element, or not be an immediate sibling.
+        // This is a simple heuristic; more complex DOM structures might need more robust selectors.
+        const parent = multiUserSpan.parentElement;
+        if (parent) {
+            // Look for a span sibling of the parent of multiUserSpan, common in some layouts
+            let potentialSpan = parent.nextElementSibling;
+            if (potentialSpan && potentialSpan.tagName === 'SPAN') {
+                 usernamesTextSpan = potentialSpan;
+            } else {
+                // Or look for a span among the siblings of multiUserSpan itself more broadly
+                let currentSibling = multiUserSpan.nextElementSibling;
+                while(currentSibling) {
+                    if (currentSibling.tagName === 'SPAN' && !currentSibling.hasAttribute('data-avatar-count')) {
+                        usernamesTextSpan = currentSibling;
+                        break;
+                    }
+                    currentSibling = currentSibling.nextElementSibling;
+                }
+            }
+        }
+      }
+
+      if (!usernamesTextSpan || usernamesTextSpan.tagName !== 'SPAN') {
+        // console.log("Could not find the usernames text span for multi-user cell:", cell);
+        return; // Skip if we can't find where to update text
+      }
+
+      let processedAtLeastOneUser = false;
+      const usernamesToFetch = new Set(); // Use a Set to avoid duplicate fetches for the same user in this cell
+
+      avatarImgs.forEach(img => {
+        const username = img.alt ? img.alt.replace('@', '').trim() : null;
+        if (username) {
+          usernamesToFetch.add(username);
+        }
+      });
+
+      if (usernamesToFetch.size === 0) {
+        // No valid usernames extracted from alt tags, maybe mark as processed to avoid retrying?
+        // For now, let's only mark if we actually attempt fetches.
+        return;
+      }
+
+      usernamesToFetch.forEach(username => {
+        processedAtLeastOneUser = true;
+        const processUpdate = (displayName) => {
+          // Update alt attributes of all matching images within this specific multiUserSpan
+          avatarImgs.forEach(img => {
+            const originalAlt = img.alt ? img.alt.replace('@', '').trim() : null;
+            if (originalAlt === username) {
+              if (img.alt !== `@${displayName}`) {
+                img.alt = `@${displayName}`;
+              }
+            }
+          });
+          // Update the text in the usernamesTextSpan
+          updateTextNodes(usernamesTextSpan, username, displayName);
+        };
+
+        if (displayNames[username]) {
+          processUpdate(displayNames[username]);
+        } else {
+          registerElement(username, processUpdate);
+          fetchDisplayName(username);
+        }
+      });
+
+      // Mark the cell as processed if we initiated any processing for its users.
+      if (processedAtLeastOneUser) {
+        cell.setAttribute(PROCESSED_MARKER, 'true');
+      }
+    });
+  }
+
   // Register an update callback for an element associated with a username.
   // When we have the display name, the callback will be invoked.
   function registerElement(username, updateCallback) {
@@ -171,6 +372,87 @@
   // ------------------------------
   // DOM Processing Functions
   // ------------------------------
+
+  function processSingleUserGridCell(root) {
+    if (!(root instanceof Element)) return;
+
+    let cellsToProcess = [];
+    if (root.matches('div[role="gridcell"]')) {
+      cellsToProcess.push(root);
+    }
+    // Prevent adding root twice if it's also captured by querySelectorAll (though unlikely for this specific case if root is the cell)
+    // However, the PROCESSED_MARKER check handles actual duplicate processing.
+    cellsToProcess.push(...Array.from(root.querySelectorAll('div[role="gridcell"]')));
+    // Use a Set to automatically handle deduplication if any node was added twice.
+    const uniqueCells = Array.from(new Set(cellsToProcess));
+
+    uniqueCells.forEach(cell => {
+      if (cell.hasAttribute(PROCESSED_MARKER)) {
+        return;
+      }
+
+      const avatarImg = cell.querySelector('img[data-testid="github-avatar"]');
+      if (!avatarImg) {
+        return;
+      }
+
+      const username = avatarImg.alt ? avatarImg.alt.replace('@', '').trim() : null;
+      if (!username) {
+        return;
+      }
+
+      // Find the span containing the username.
+      // This is a simple approach: find all spans and check their textContent.
+      let usernameSpan = null;
+      const spans = cell.querySelectorAll('span');
+      for (let span of spans) {
+        if (span.textContent.trim() === username || span.textContent.trim() === `@${username}`) {
+          usernameSpan = span;
+          break;
+        }
+      }
+
+      // If a direct child span of the cell (or its descendants) contains the username.
+      // This is a common pattern in some UIs.
+      if (!usernameSpan) {
+        const potentialSpans = cell.querySelectorAll('div > span, div > div > span'); // Adjust depth as needed
+        for (let span of potentialSpans) {
+            if (span.textContent.trim() === username || span.textContent.trim() === `@${username}`) {
+                usernameSpan = span;
+                break;
+            }
+        }
+      }
+
+
+      if (usernameSpan) {
+        const processUpdate = (displayName) => {
+          if (avatarImg.alt !== displayName) {
+            avatarImg.alt = `@${displayName}`; // Typically includes @
+          }
+          updateTextNodes(usernameSpan, username, displayName);
+          // Mark the cell itself as processed after successful update attempt.
+          // This ensures we don't re-process if the initial fetchDisplayName fails
+          // and then a mutation observer picks it up again.
+          // The updateTextNodes and alt setting are idempotent if displayNames[username] is already correct.
+          cell.setAttribute(PROCESSED_MARKER, 'true');
+        };
+
+        if (displayNames[username]) {
+          processUpdate(displayNames[username]);
+        } else {
+          registerElement(username, processUpdate);
+          fetchDisplayName(username);
+        }
+      } else {
+        // If no span is found, we might still want to mark the cell as processed
+        // to avoid re-checking it repeatedly if the structure is unexpected.
+        // However, this could prevent processing if the span appears later due to JS rendering.
+        // For now, let's only mark as processed if we attempt an update.
+        // console.log("No username span found for", username, "in cell:", cell);
+      }
+    });
+  }
 
 // Function to update the element directly
 function updateElementDirectly(element, username, displayName) {
@@ -360,6 +642,9 @@ function processProjectElements(root) {
   // Initial processing.
   processAnchorsByHovercard(document.body);
   processProjectElements(document.body);
+  processSingleUserGridCell(document.body);
+  processMultiUserGridCell(document.body);
+  processBoardGroupHeader(document.body);
 
   // Set up a MutationObserver to handle new elements.
   const observer = new MutationObserver((mutations) => {
@@ -368,6 +653,9 @@ function processProjectElements(root) {
         if (node.nodeType === Node.ELEMENT_NODE) {
           processAnchorsByHovercard(node);
           processProjectElements(node);
+          processSingleUserGridCell(node);
+          processMultiUserGridCell(node);
+          processBoardGroupHeader(node);
         }
       });
     }
