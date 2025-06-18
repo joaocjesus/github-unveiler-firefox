@@ -14,9 +14,15 @@ async function clearOldCacheEntries() {
     const serverCache = cache[origin];
     for (const username in serverCache) {
       const entry = serverCache[username];
-      if (now - entry.timestamp > SEVEN_DAYS) {
+      if (!entry.noExpire && (now - entry.timestamp > SEVEN_DAYS)) {
         delete serverCache[username];
         updated = true;
+      } else {
+        // Entry is being kept, check its displayName
+        if (!entry.displayName || entry.displayName.trim() === '') {
+          entry.displayName = username; // Reset to username
+          updated = true; // Mark cache as updated
+        }
       }
     }
     // Remove origin if its cache is empty.

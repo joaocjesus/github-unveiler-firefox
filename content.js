@@ -366,6 +366,10 @@
         const el = doc.querySelector(".vcard-fullname");
         let displayName = el ? el.textContent.trim() : username;
 
+        if (!displayName || displayName.trim() === '') {
+          displayName = username;
+        }
+
         // Tell the background to update the cache and release the lock.
         await chrome.runtime.sendMessage({
           type: "releaseLock",

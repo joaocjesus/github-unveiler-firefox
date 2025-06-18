@@ -20,5 +20,6 @@
     "32": "icon32.png",
     "48": "icon48.png",
     "128": "icon128.png"
-  }
+  },
+  "options_page": "options.html"
 }
