@@ -4,7 +4,7 @@
   // ------------------------------
   const PROCESSED_MARKER = "data-ghu-processed";
   const CACHE_KEY = "githubDisplayNameCache";
-  const displayNames = {}; // username => fetched display name
+  const displayNames = {}; // username => { name: fetched display name, timestamp: date, noExpire: boolean }
   const elementsByUsername = {}; // username => array of update callbacks
 
   // Helper: Get the cache from chrome.storage.local.
@@ -103,11 +103,11 @@
         });
       }
 
-      const processUpdate = (displayName) => {
-        if (avatarImg.alt !== `@${displayName}`) {
-          avatarImg.alt = `@${displayName}`;
+      const processUpdate = (userData) => { // Changed parameter name
+        if (avatarImg.alt !== `@${userData.name}`) {
+          avatarImg.alt = `@${userData.name}`;
         }
-        updateTextNodes(usernameTextSpan, username, displayName);
+        updateTextNodes(usernameTextSpan, username, userData.name);
 
         tooltipSpans.forEach((tooltipSpan) => {
           // Replace username in tooltip text. Be careful with case sensitivity if needed.
@@ -122,7 +122,7 @@
           if (tooltipSpan.textContent.match(regex)) {
             tooltipSpan.textContent = tooltipSpan.textContent.replace(
               regex,
-              displayName
+              userData.name
             );
           }
         });
@@ -222,20 +222,20 @@
 
       usernamesToFetch.forEach((username) => {
         processedAtLeastOneUser = true;
-        const processUpdate = (displayName) => {
+        const processUpdate = (userData) => { // Changed parameter name
           // Update alt attributes of all matching images within this specific multiUserSpan
           avatarImgs.forEach((img) => {
             const originalAlt = img.alt
               ? img.alt.replace("@", "").trim()
               : null;
             if (originalAlt === username) {
-              if (img.alt !== `@${displayName}`) {
-                img.alt = `@${displayName}`;
+              if (img.alt !== `@${userData.name}`) {
+                img.alt = `@${userData.name}`;
               }
             }
           });
           // Update the text in the usernamesTextSpan
-          updateTextNodes(usernamesTextSpan, username, displayName);
+          updateTextNodes(usernamesTextSpan, username, userData.name);
         };
 
         if (displayNames[username]) {
@@ -269,13 +269,13 @@
     const callbacks = elementsByUsername[username];
     if (!callbacks) return;
 
-    const name = displayNames[username] || username;
+    const data = displayNames[username] || { name: username, timestamp: 0, noExpire: true };
     // Ensure we only run each callback a single time
     delete elementsByUsername[username];
 
     callbacks.forEach((cb) => {
       try {
-        cb(name);
+        cb(data);
       } catch (e) {
         console.error("Error updating element for @" + username, e);
       }
@@ -284,9 +284,9 @@
 
   /**
    * Walk all text nodes under `element`, replace @username or username tokens
-   * with the displayName—but skip any node that already contains the full displayName.
+   * with the userData.name—but skip any node that already contains the full userData.name.
    */
-  function updateTextNodes(element, username, displayName) {
+  function updateTextNodes(element, username, name) { // displayName parameter changed to name
     // Escape special regex chars in the username
     const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     // Match standalone @username or username (doesn't run inside other words)
@@ -301,8 +301,8 @@
     let node;
     let changed = false;
     while ((node = walker.nextNode())) {
-      // If we've already inserted the full displayName here, skip it
-      if (node.textContent.includes(displayName)) {
+      // If we've already inserted the full name here, skip it
+      if (node.textContent.includes(name)) { // check against name
         // If the display name is already present, we assume it's fully correct.
         // This is simpler and might be more robust for cases like TBBle.
         // However, this means if a username token still exists that *should* be replaced,
@@ -314,7 +314,7 @@
       }
 
       const updated = node.textContent.replace(regex, (match) =>
-        match.startsWith("@") ? `@${displayName}` : displayName
+        match.startsWith("@") ? `@${name}` : name // use name
       );
       if (updated !== node.textContent) {
         node.textContent = updated;
@@ -339,7 +339,8 @@
       let entry = serverCache[username];
 
       if (entry) {
-        displayNames[username] = entry.displayName;
+        // Store the full object including timestamp and noExpire
+        displayNames[username] = { name: entry.displayName, timestamp: entry.timestamp, noExpire: entry.noExpire };
         updateElements(username);
         return;
       }
@@ -392,19 +393,20 @@
           const serverCache = cache[location.hostname] || {};
           let entry = serverCache[username];
           if (entry) {
-            displayNames[username] = entry.displayName;
+            // Store the full object including timestamp and noExpire
+            displayNames[username] = { name: entry.displayName, timestamp: entry.timestamp, noExpire: entry.noExpire };
             updateElements(username);
             return;
           }
           attempt++;
         }
         // Fallback if we still haven't received a display name.
-        displayNames[username] = username;
+        displayNames[username] = { name: username, timestamp: 0, noExpire: true };
         updateElements(username);
       }
     } catch (err) {
       console.error("Error fetching display name for @" + username, err);
-      displayNames[username] = username;
+      displayNames[username] = { name: username, timestamp: 0, noExpire: true };
       updateElements(username);
     }
   }
@@ -412,6 +414,116 @@
   // ------------------------------
   // DOM Processing Functions
   // ------------------------------
+
+  const HOVERCARD_PROCESSED_MARKER = "data-ghu-hovercard-processed";
+
+  function processHovercard(hovercardElement) {
+    if (hovercardElement.hasAttribute(HOVERCARD_PROCESSED_MARKER)) {
+      return;
+    }
+
+    let username;
+    try {
+      const hydroView = hovercardElement.getAttribute("data-hydro-view");
+      if (!hydroView) return;
+      const jsonData = JSON.parse(hydroView);
+      username = jsonData?.payload?.card_user_login;
+    } catch (e) {
+      console.error("Error parsing hovercard data-hydro-view:", e, hovercardElement);
+      return;
+    }
+
+    if (!username) {
+      // console.log("No username found in hovercard data:", hovercardElement);
+      return;
+    }
+
+    const processUpdate = (userData) => {
+      if (hovercardElement.hasAttribute(HOVERCARD_PROCESSED_MARKER)) {
+        // Check again in case it was processed while waiting for data
+        return;
+      }
+      const iconUrl = chrome.runtime.getURL("icon16.png");
+      let expirationText = "";
+      if (userData.noExpire) {
+        expirationText = "(No expiration)";
+      } else if (userData.timestamp) {
+        const expiryDate = new Date(userData.timestamp + 7 * 24 * 60 * 60 * 1000);
+        expirationText = `(Expires: ${expiryDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+      }
+
+      const newRow = document.createElement("div");
+      newRow.classList.add("d-flex", "flex-items-baseline", "f6", "mt-1", "color-fg-muted");
+      newRow.style.cursor = "pointer";
+      // Removed direct style settings for display, alignItems, marginTop, paddingTop, borderTop
+
+      const iconContainer = document.createElement('div');
+      iconContainer.classList.add("mr-1", "flex-shrink-0");
+
+      const iconImg = document.createElement('img');
+      iconImg.src = iconUrl;
+      iconImg.alt = "Extension icon"; // Added alt text
+      iconImg.style.width = "16px";
+      iconImg.style.height = "16px";
+      iconImg.style.verticalAlign = "middle"; // May help alignment
+
+      iconContainer.appendChild(iconImg);
+
+      const textContainer = document.createElement('span');
+      textContainer.classList.add("lh-condensed", "overflow-hidden", "no-wrap"); // no-wrap for ellipsis
+      textContainer.style.textOverflow = "ellipsis";
+      textContainer.textContent = `${userData.name} ${expirationText}`;
+      
+      // Clear any previous innerHTML (though newRow is fresh, good practice if refactoring)
+      newRow.innerHTML = ''; 
+      newRow.appendChild(iconContainer);
+      newRow.appendChild(textContainer);
+
+      newRow.addEventListener("click", () => {
+        chrome.runtime.sendMessage({ type: "openOptionsPage", url: `options.html#${username}` });
+      });
+      // newRow.style.cursor = "pointer"; // Already set above
+
+      // Append to the correct container within the hovercard
+      // The main content area often has a class like "Popover-message" or specific padding classes.
+      // GitHub's structure: div[data-hydro-view] > div.Popover > div.Popover-message > div (target for append)
+      // Or it could be a simpler structure like div[data-hydro-view] > div.px-3.pb-3
+      // This logic for finding the append target should be preserved.
+      const appendTarget = hovercardElement.querySelector('.Popover-message > div:not([class])') || 
+                         hovercardElement.querySelector('.Popover-message > div[class*="Popover-message--large"]') || 
+                         hovercardElement.querySelector('.px-3.pb-3') || 
+                         hovercardElement;
+      
+      // Ensure not to add multiple times (though marker should prevent this)
+      // Check if a row with our specific structure (e.g. an icon with alt "Extension icon") already exists.
+      let existingExtensionRow = appendTarget.querySelector('img[alt="Extension icon"]');
+      // More specific check if the parent has our classes
+      if (existingExtensionRow && existingExtensionRow.parentElement && existingExtensionRow.parentElement.parentElement === newRow.parentElement && existingExtensionRow.parentElement.classList.contains("mr-1")) {
+          // Already added, do nothing or replace. For now, rely on HOVERCARD_PROCESSED_MARKER.
+      } else {
+        // Add a top border to newRow to separate it visually, like other GitHub hovercard items
+        // This was previously handled by inline style, now handled by GitHub classes or explicit addition if needed
+        // GitHub's .mt-1 handles margin, but a border might be desired for separation.
+        // If the classes "d-flex flex-items-baseline f6 mt-1 color-fg-muted" don't provide a visual separator,
+        // a border can be added. For now, let's assume these classes are sufficient or a border is not strictly needed
+        // if it visually aligns with other non-bordered items.
+        // However, the original plan had a border, let's add it back if GH classes don't provide it.
+        // No, the plan was to REMOVE inline styles for borderTop. Let's stick to that.
+        // If a border is needed, it should be a class or a final style adjustment.
+        // For now, let's assume the classes are enough or a borderless look is acceptable.
+        appendTarget.appendChild(newRow);
+      }
+
+      hovercardElement.setAttribute(HOVERCARD_PROCESSED_MARKER, "true");
+    };
+
+    if (displayNames[username]) {
+      processUpdate(displayNames[username]);
+    } else {
+      registerElement(username, processUpdate);
+      fetchDisplayName(username);
+    }
+  }
 
   function processSingleUserGridCell(root) {
     if (!(root instanceof Element)) return;
@@ -477,11 +589,11 @@
       }
 
       if (usernameSpan) {
-        const processUpdate = (displayName) => {
-          if (avatarImg.alt !== displayName) {
-            avatarImg.alt = `@${displayName}`; // Typically includes @
+        const processUpdate = (userData) => { // Changed parameter name
+          if (avatarImg.alt !== `@${userData.name}`) {
+            avatarImg.alt = `@${userData.name}`; // Typically includes @
           }
-          updateTextNodes(usernameSpan, username, displayName);
+          updateTextNodes(usernameSpan, username, userData.name);
           // Mark the cell itself as processed after successful update attempt.
           // This ensures we don't re-process if the initial fetchDisplayName fails
           // and then a mutation observer picks it up again.
@@ -506,27 +618,28 @@
   }
 
   // Function to update the element directly
-  function updateElementDirectly(element, username, displayName) {
+  // This function is called by other callbacks which will now pass userData.name
+  function updateElementDirectly(element, username, name) { // displayName changed to name
     let changed = false;
     if (
       element.tagName === "H3" &&
       element.classList.contains("slicer-items-module__title--EMqA1")
     ) {
       // updateTextNodes returns true if it made a change
-      changed = updateTextNodes(element, username, displayName);
+      changed = updateTextNodes(element, username, name);
     } else if (
       element.tagName === "IMG" &&
       element.dataset.testid === "github-avatar"
     ) {
-      if (element.alt === displayName) return false; // Already updated
-      element.alt = displayName;
+      if (element.alt === name) return false; // Already updated
+      element.alt = name; // This should be @name for alt tags, handled by caller if needed
       changed = true;
     } else if (
       element.tagName === "SPAN" &&
       element.hasAttribute("aria-label")
     ) {
-      if (element.getAttribute("aria-label") === displayName) return false; // Already updated
-      element.setAttribute("aria-label", displayName);
+      if (element.getAttribute("aria-label") === name) return false; // Already updated
+      element.setAttribute("aria-label", name);
       changed = true;
     }
     return changed;
@@ -615,13 +728,14 @@
         return;
       }
 
-      const processUpdate = (nameToDisplay) => {
-        const h3Updated = updateTextNodes(h3Element, username, nameToDisplay);
+      const processUpdate = (userData) => { // Changed parameter name
+        const h3Updated = updateTextNodes(h3Element, username, userData.name);
         if (h3Updated) {
           h3Element.setAttribute(PROCESSED_MARKER, "true");
         }
-        if (avatarElement.alt !== nameToDisplay) {
-          avatarElement.alt = nameToDisplay;
+        // Avatar alt attributes typically include "@"
+        if (avatarElement.alt !== `@${userData.name}`) {
+          avatarElement.alt = `@${userData.name}`;
         }
       };
 
@@ -683,14 +797,14 @@
         const updated = updateTextNodes(
           anchor,
           username,
-          displayNames[username]
+          displayNames[username].name // Access .name property
         );
         if (updated) {
           anchor.setAttribute(PROCESSED_MARKER, "true");
         }
       } else {
-        registerElement(username, (displayName) => {
-          const updated = updateTextNodes(anchor, username, displayName);
+        registerElement(username, (userData) => { // Changed parameter name
+          const updated = updateTextNodes(anchor, username, userData.name);
           if (updated) {
             anchor.setAttribute(PROCESSED_MARKER, "true");
           }
@@ -731,6 +845,13 @@
           processSingleUserGridCell(node);
           processMultiUserGridCell(node);
           processBoardGroupHeader(node);
+
+          // Check for hovercards
+          const hovercardSelector = 'div[data-hydro-view*="user-hovercard-hover"]';
+          if (node.matches(hovercardSelector)) {
+            processHovercard(node);
+          }
+          node.querySelectorAll(hovercardSelector).forEach(processHovercard);
         }
       });
     }
@@ -740,4 +861,7 @@
     childList: true,
     subtree: true,
   });
+
+  // Initial scan for existing hovercards on page load
+  document.querySelectorAll('div[data-hydro-view*="user-hovercard-hover"]').forEach(processHovercard);
 })();
