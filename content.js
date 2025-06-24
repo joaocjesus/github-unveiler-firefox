@@ -421,28 +421,45 @@
     if (hovercardElement.hasAttribute(HOVERCARD_PROCESSED_MARKER)) {
       return;
     }
-
+    // Logs removed
     let username;
+    let hydroView;
+    let jsonData;
+
     try {
-      const hydroView = hovercardElement.getAttribute("data-hydro-view");
+      hydroView = hovercardElement.getAttribute("data-hydro-view");
       if (!hydroView) return;
-      const jsonData = JSON.parse(hydroView);
+      jsonData = JSON.parse(hydroView);
       username = jsonData?.payload?.card_user_login;
+
+      if (!username && jsonData?.payload?.originating_url) {
+        // Attempt to extract username from originating_url as a fallback
+        // Example: "https://github.com/users/SethRobinson/hovercard?..."
+        const urlPattern = /\/users\/([^\/]+)\/hovercard/;
+        const match = jsonData.payload.originating_url.match(urlPattern);
+        if (match && match[1]) {
+          username = match[1];
+        }
+      }
+
     } catch (e) {
-      console.error("Error parsing hovercard data-hydro-view:", e, hovercardElement);
+      console.error("Error parsing hovercard data-hydro-view:", e, hovercardElement); // Kept general error log
       return;
     }
 
     if (!username) {
-      // console.log("No username found in hovercard data:", hovercardElement);
+      // console.log("No username found in hovercard data:", hovercardElement); // Kept original commented-out log
       return;
     }
+    // console.log("[GHU HC Debug] Username extracted:", username); // Debug log removed
 
     const processUpdate = (userData) => {
+      // console.log("[GHU HC Debug] processUpdate called for username:", username, "with userData:", userData); // Debug log removed
       if (hovercardElement.hasAttribute(HOVERCARD_PROCESSED_MARKER)) {
-        // Check again in case it was processed while waiting for data
+        // console.log("[GHU HC Debug] Element already has HOVERCARD_PROCESSED_MARKER (inside processUpdate). Exiting."); // Debug log removed
         return;
       }
+      // console.log("[GHU HC Debug] processUpdate: Element does not have marker. Proceeding to create row."); // Debug log removed
       const iconUrl = chrome.runtime.getURL("icon16.png");
       // Removed expirationText definition and logic block
 
@@ -842,10 +859,14 @@
 
           // Check for hovercards
           const hovercardSelector = 'div[data-hydro-view*="user-hovercard-hover"]';
-          if (node.matches(hovercardSelector)) {
+          if (node.matches && node.matches(hovercardSelector)) { // Added node.matches check for safety
             processHovercard(node);
           }
-          node.querySelectorAll(hovercardSelector).forEach(processHovercard);
+          // Check children of the added node
+          if (node.querySelectorAll) {
+            const childrenCards = node.querySelectorAll(hovercardSelector);
+            childrenCards.forEach(processHovercard);
+          }
         }
       });
     }

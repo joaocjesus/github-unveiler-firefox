@@ -25,28 +25,38 @@ describe('GitHub Usernames Extension - Hovercard Functionality', () => {
   let processHovercard; // This will be loaded from content.js or its logic replicated/mocked
 
   // Helper function to create a mock hovercard DOM element
-  function createMockHovercard(username, existingContent = '', customDataHydroView) {
-    const hovercard = document.createElement('div');
-    if (customDataHydroView) {
-      hovercard.setAttribute('data-hydro-view', customDataHydroView);
-    } else {
-      hovercard.setAttribute('data-hydro-view', JSON.stringify({
-        event_type: 'user-hovercard-hover',
-        payload: { card_user_login: username }
-      }));
-    }
-    const mainContent = document.createElement('div');
-    mainContent.className = 'px-3 pb-3'; // Standard class where content is appended
-    mainContent.innerHTML = existingContent;
-    hovercard.appendChild(mainContent);
-    document.body.appendChild(hovercard);
-    return hovercard;
+  // This function now creates a structure that mirrors the user-provided HTML (Type A/B)
+  // where the returned element (hovercardElement) is the div.px-3.pb-3[data-hydro-view]
+  function createMockHovercard(username, existingContent = '', customDataHydroViewValue) {
+    const popoverOuter = document.createElement('div');
+    popoverOuter.className = 'Popover js-hovercard-content'; // Mimicking outer structure
+
+    const popoverMessage = document.createElement('div');
+    popoverMessage.className = 'Popover-message Popover-message--large Box';
+    popoverOuter.appendChild(popoverMessage);
+
+    const unnamedParentDiv = document.createElement('div'); // The direct parent of hovercardElement
+    popoverMessage.appendChild(unnamedParentDiv);
+
+    const hovercardElement = document.createElement('div');
+    hovercardElement.className = 'px-3 pb-3'; // This is the main content area
+    const hydroViewData = customDataHydroViewValue || JSON.stringify({
+      event_type: 'user-hovercard-hover',
+      payload: { card_user_login: username }
+    });
+    hovercardElement.setAttribute('data-hydro-view', hydroViewData);
+    hovercardElement.innerHTML = existingContent; // Place existing rows here
+
+    unnamedParentDiv.appendChild(hovercardElement);
+    document.body.appendChild(popoverOuter); // Add the whole structure to body
+
+    return hovercardElement; // This is what processHovercard will receive
   }
 
+  // Updated findNewRowInHovercard to reflect that the row is a direct child of hovercardElement
   function findNewRowInHovercard(hovercardElement) {
-    const contentContainer = hovercardElement.querySelector('.px-3.pb-3');
-    if (!contentContainer) return null;
-    return contentContainer.querySelector('div[data-testid="ghu-extension-row"]');
+    // hovercardElement is the div.px-3.pb-3, so the new row is its direct child.
+    return hovercardElement.querySelector('div[data-testid="ghu-extension-row"]');
   }
   
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -78,6 +88,14 @@ describe('GitHub Usernames Extension - Hovercard Functionality', () => {
         if (!hydroView) return;
         const jsonData = JSON.parse(hydroView);
         username = jsonData?.payload?.card_user_login;
+
+        if (!username && jsonData?.payload?.originating_url) {
+          const urlPattern = /\/users\/([^\/]+)\/hovercard/;
+          const match = jsonData.payload.originating_url.match(urlPattern);
+          if (match && match[1]) {
+            username = match[1];
+          }
+        }
       } catch (e) {
         console.error("Error parsing hovercard data-hydro-view:", e, hovercardElement);
         return;
@@ -123,13 +141,12 @@ describe('GitHub Usernames Extension - Hovercard Functionality', () => {
         });
         // newRow.style.cursor = "pointer"; // Already set
 
-        let contentContainer = hovercardElement.querySelector('.px-3.pb-3');
-        if (!contentContainer) {
-            // console.log('[TEST DEBUG] contentContainer not found, falling back to hovercardElement itself.');
-            contentContainer = hovercardElement; // Fallback
-        }
-        // console.log('[TEST DEBUG] Appending newRow to contentContainer:', contentContainer);
-        contentContainer.appendChild(newRow);
+        // Simplified appendTarget logic for the test's processHovercard mock,
+        // reflecting that with the new createMockHovercard, appendTarget will be hovercardElement itself.
+        const appendTarget = hovercardElement;
+
+        // console.log('[TEST DEBUG] Appending newRow to appendTarget:', appendTarget);
+        appendTarget.appendChild(newRow);
         // console.log('[TEST DEBUG] newRow appended. Setting HOVERCARD_PROCESSED_MARKER.');
         hovercardElement.setAttribute(HOVERCARD_PROCESSED_MARKER, "true");
       };
@@ -274,8 +291,8 @@ describe('GitHub Usernames Extension - Hovercard Functionality', () => {
 
     const newRow = findNewRowInHovercard(hovercard);
     expect(newRow).toBeNull(); // No new row should be added
-    const contentContainer = hovercard.querySelector('.px-3.pb-3');
-    expect(contentContainer.innerHTML).toBe('<span>Original Content</span>'); // Original content unchanged
+    // With the updated createMockHovercard, 'hovercard' IS the content container (div.px-3.pb-3)
+    expect(hovercard.innerHTML).toBe('<span>Original Content</span>'); // Original content unchanged
     expect(fetchDisplayName).not.toHaveBeenCalled();
     expect(registerElement).not.toHaveBeenCalled();
   });
@@ -323,4 +340,34 @@ describe('GitHub Usernames Extension - Hovercard Functionality', () => {
   // Conceptual tests for MutationObserver and initial scan would require more complex setup
   // to actually run content.js's observer/initial scan logic.
   // For now, these are covered by the fact that processHovercard itself is tested.
+
+  test('Extracts username from originating_url if card_user_login is missing', () => {
+    const hovercard = createMockHovercard(
+      null, // No default username needed for card_user_login
+      '<span>Original Content</span>',
+      JSON.stringify({
+        event_type: 'user-hovercard-hover',
+        payload: {
+          // card_user_login is deliberately missing
+          originating_url: 'https://github.com/users/fallbackuser/hovercard?someparam=true'
+        }
+      })
+    );
+    processHovercard(hovercard);
+
+    // Expect that fetchDisplayName was called with the username parsed from originating_url
+    expect(fetchDisplayName).toHaveBeenCalledWith('fallbackuser');
+    expect(registerElement).toHaveBeenCalledWith('fallbackuser', expect.any(Function));
+    expect(lastRegisteredCallback).toBeDefined();
+
+    // Simulate fetchDisplayName resolving to ensure row is added
+    const userData = { name: 'Fallback User DisplayName', timestamp: new Date().getTime(), noExpire: false };
+    lastRegisteredCallback(userData);
+
+    const newRow = findNewRowInHovercard(hovercard);
+    expect(newRow).not.toBeNull();
+    const textContainer = newRow.querySelector('span.lh-condensed');
+    expect(textContainer.textContent).toBe('Fallback User DisplayName');
+    expect(hovercard.hasAttribute(HOVERCARD_PROCESSED_MARKER)).toBe(true);
+  });
 });
