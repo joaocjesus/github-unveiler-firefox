@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GitHub Unveiler Options</title>
+  <link rel="stylesheet" type="text/css" href="options.css">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+      margin: 0;
+      padding: 20px;
+      background-color: #f6f8fa;
+      color: #24292e;
+    }
+
+    section {
+      margin-bottom: 30px;
+      background-color: #fff;
+      border: 1px solid #e1e4e8;
+      border-radius: 6px;
+      padding: 20px;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e1e4e8;
+    }
+
+    h2 {
+      font-size: 20px;
+      margin-top: 0;
+      margin-bottom: 15px;
+    }
+
+    #nameReplacementsTable {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    #nameReplacementsTable th,
+    #nameReplacementsTable td {
+      border: 1px solid #dfe2e5;
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    #nameReplacementsTable th {
+      background-color: #f6f8fa;
+      font-weight: 600;
+    }
+
+    #nameReplacementsTable td input[type="text"] {
+      width: 95%;
+      padding: 6px 8px;
+      border: 1px solid #d1d5da;
+      border-radius: 6px;
+      box-sizing: border-box;
+    }
+
+    #nameReplacementsTable td input[type="checkbox"] {
+      margin-top: 5px;
+      vertical-align: middle;
+    }
+
+    #nameReplacementsTable td button {
+      padding: 6px 12px;
+      border: 1px solid #d1d5da;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      margin-right: 5px;
+    }
+
+    #nameReplacementsTable td button:hover {
+      border-color: #a7a7a7;
+    }
+
+    /* Specific styling for delete button for visual cue, can be expanded */
+    #nameReplacementsTable td button:last-child { /* Assuming delete is last */
+       /* background-color: #f85149; */
+       /* color: white; */
+       /* border-color: #f85149; */
+    }
+    /* #nameReplacementsTable td button:last-child:hover {
+        background-color: #da3633;
+        border-color: #da3633;
+    }*/
+
+    ul#enabledDomainsList {
+        list-style-type: disc;
+        padding-left: 20px;
+    }
+    ul#enabledDomainsList li {
+        margin-bottom: 5px;
+    }
+
+    #optionsLogo {
+      position: fixed;
+      top: 15px;
+      right: 15px;
+      width: 48px;
+      height: 48px;
+      opacity: 0.8;
+    }
+    #optionsLogo:hover {
+      opacity: 1;
+    }
+
+    .highlight-row {
+      background-color: #fff8c5; /* Light yellow */
+      transition: background-color 0.5s ease-in-out;
+    }
+  </style>
+</head>
+<body>
+  <img id="optionsLogo" src="icon128.png" alt="Extension Logo">
+  <h1>GitHub Unveiler Options</h1>
+
+  <section>
+    <h2>Enabled GitHub Domains</h2>
+    <ul id="enabledDomainsList">
+      <!-- Domains will be listed here by options.js -->
+    </ul>
+  </section>
+
+  <section>
+    <h2>Name Replacements</h2>
+    <table id="nameReplacementsTable">
+      <thead>
+        <tr>
+          <th>Origin</th>
+          <th>Username</th>
+          <th>Display Name</th>
+          <th>Do Not Expire</th>
+          <th>Expiration Date</th>
+        </tr>
+      </thead>
+      <tbody id="nameReplacementsBody">
+        <!-- Replacement configurations will be listed here by options.js -->
+      </tbody>
+    </table>
+  </section>
+
+  <script src="options.js"></script>
+</body>
+</html>

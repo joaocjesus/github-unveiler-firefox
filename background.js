@@ -14,9 +14,15 @@ async function clearOldCacheEntries() {
     const serverCache = cache[origin];
     for (const username in serverCache) {
       const entry = serverCache[username];
-      if (now - entry.timestamp > SEVEN_DAYS) {
+      if (!entry.noExpire && (now - entry.timestamp > SEVEN_DAYS)) {
         delete serverCache[username];
         updated = true;
+      } else {
+        // Entry is being kept, check its displayName
+        if (!entry.displayName || entry.displayName.trim() === '') {
+          entry.displayName = username; // Reset to username
+          updated = true; // Mark cache as updated
+        }
       }
     }
     // Remove origin if its cache is empty.
@@ -126,6 +132,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     // Indicate that we'll send a response asynchronously.
     return true;
+  } else if (message.type === "openOptionsPage") {
+    chrome.tabs.create({ url: chrome.runtime.getURL(message.url) });
+    sendResponse({ success: true });
   }
 });
 
@@ -151,7 +160,12 @@ async function updateCache(origin, username, displayName) {
   cacheLock = cacheLock.then(async () => {
     const cache = await getCache();
     const serverCache = cache[origin] || {};
-    serverCache[username] = { displayName, timestamp: Date.now() };
+    const existingEntry = serverCache[username];
+    let noExpireValue = false;
+    if (existingEntry && existingEntry.noExpire === true) {
+      noExpireValue = true;
+    }
+    serverCache[username] = { displayName, timestamp: Date.now(), noExpire: noExpireValue };
     cache[origin] = serverCache;
     await setCache(cache);
   }).catch((err) => {
