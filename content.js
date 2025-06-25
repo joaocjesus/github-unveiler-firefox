@@ -2,6 +2,39 @@
   // ------------------------------
   // Global Variables & Cache Setup
   // ------------------------------
+
+  // ------------------------------
+  // Utility Functions
+  // ------------------------------
+
+  /**
+   * Checks if a given string is a valid GitHub username.
+   * - Between 1 and 39 characters long.
+   * - Consists of alphanumeric characters and single hyphens.
+   * - Cannot start or end with a hyphen.
+   * - Cannot contain consecutive hyphens.
+   * @param {string} username The string to validate.
+   * @returns {boolean} True if valid, false otherwise.
+   */
+  function isValidUsername(username) {
+    if (!username) {
+      return false;
+    }
+    // GitHub username constraints:
+    // - Length: 1 to 39 characters
+    // - Allowed characters: Alphanumeric and single hyphens
+    // - Cannot start or end with a hyphen
+    // - Cannot contain consecutive hyphens
+    const githubUsernameRegex = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
+    if (username.length > 39) { // Double check length, though regex implies it.
+        return false;
+    }
+    return githubUsernameRegex.test(username);
+  }
+
+  // ------------------------------
+  // Global Variables & Cache Setup
+  // ------------------------------
   const PROCESSED_MARKER = "data-ghu-processed";
   const CACHE_KEY = "githubDisplayNameCache";
   const displayNames = {}; // username => fetched display name
@@ -73,10 +106,21 @@
         }
       }
 
-      const username = avatarImg.alt
+      const potentialUsername = avatarImg.alt
         ? avatarImg.alt.replace("@", "").trim()
         : null;
-      if (!username) return;
+
+      if (!isValidUsername(potentialUsername)) {
+        // Mark as processed if the alt text is not a valid username to avoid reprocessing.
+        // This helps with the case where alt text is something like a commit message.
+        const containerToMark = groupHeaderContainer || headerContentBlock;
+        // Ensure we don't mark null or undefined containers
+        if (containerToMark && !containerToMark.hasAttribute(PROCESSED_MARKER)) {
+            containerToMark.setAttribute(PROCESSED_MARKER, "true");
+        }
+        return;
+      }
+      const username = potentialUsername;
 
       // Identify tooltip spans. These are often siblings to the headerContentBlock or its parent (groupHeaderContainer).
       const tooltipSpans = [];
@@ -208,9 +252,9 @@
       const usernamesToFetch = new Set(); // Use a Set to avoid duplicate fetches for the same user in this cell
 
       avatarImgs.forEach((img) => {
-        const username = img.alt ? img.alt.replace("@", "").trim() : null;
-        if (username) {
-          usernamesToFetch.add(username);
+        const potentialUsername = img.alt ? img.alt.replace("@", "").trim() : null;
+        if (isValidUsername(potentialUsername)) {
+          usernamesToFetch.add(potentialUsername);
         }
       });
 
@@ -327,7 +371,62 @@
   // ------------------------------
   // Fetching & Caching Display Names
   // ------------------------------
+
+  const KNOWN_BOT_PATTERNS = [
+    "bot", // General catch-all, especially for "[bot]" suffix
+    "copilot", // Specific name
+    "dependabot",
+    "github-actions",
+    "renovate",
+    "snyk-bot",
+    "codecov-commenter",
+    "greenkeeper",
+    "netlify",
+    "vercel",
+    // Add more known bot usernames or patterns as needed
+  ];
+
+  function isBotUsername(username) {
+    if (!username) return false;
+    const lowerUsername = username.toLowerCase();
+
+    // Check against known patterns
+    for (const pattern of KNOWN_BOT_PATTERNS) {
+      if (lowerUsername.includes(pattern)) {
+        // More specific check for "[bot]" or "-bot" suffixes or exact matches
+        if (lowerUsername === pattern || lowerUsername.endsWith(`[${pattern}]`) || lowerUsername.endsWith(`-${pattern}`) || lowerUsername.startsWith(`${pattern}-`)) {
+          return true;
+        }
+        // If pattern is just "bot", check for common bot suffixes
+        if (pattern === "bot" && (lowerUsername.endsWith("[bot]") || lowerUsername.endsWith("-bot"))) {
+          return true;
+        }
+      }
+    }
+    // Check for common bot indicators
+    if (lowerUsername.endsWith("[bot]") || lowerUsername.endsWith("-bot") || lowerUsername.startsWith("bot-")) {
+        return true;
+    }
+
+    return false;
+  }
+
   async function fetchDisplayName(username) {
+    // First, ensure username is valid and not a bot before any processing
+    if (!isValidUsername(username)) { // Should have been caught earlier, but as a safeguard
+      // console.warn(`fetchDisplayName called with invalid username: ${username}`);
+      displayNames[username] = username; // Store original invalid name to prevent re-fetch
+      updateElements(username);
+      return;
+    }
+
+    if (isBotUsername(username)) {
+      // console.log(`Skipping fetch for known bot: @${username}`);
+      displayNames[username] = username; // Use the username itself as the display name
+      updateElements(username);
+      return;
+    }
+
     // Only look up in cache if not already present in displayNames
     if (displayNames[username]) {
       updateElements(username);
@@ -453,6 +552,16 @@
     }
     // console.log("[GHU HC Debug] Username extracted:", username); // Debug log removed
 
+    if (!isValidUsername(username)) {
+      // If the extracted username isn't valid, we might not want to proceed
+      // or mark as processed to prevent re-attempts on invalid data.
+      // For now, let's log it if it's an actual value but invalid.
+      // if (username) console.warn("Invalid username extracted from hovercard:", username, hovercardElement);
+      // Mark as processed to avoid retrying invalid username from hovercard.
+      hovercardElement.setAttribute(HOVERCARD_PROCESSED_MARKER, "true");
+      return;
+    }
+
     const processUpdate = (userData) => {
       // console.log("[GHU HC Debug] processUpdate called for username:", username, "with userData:", userData); // Debug log removed
       if (hovercardElement.hasAttribute(HOVERCARD_PROCESSED_MARKER)) {
@@ -561,12 +670,16 @@
         return;
       }
 
-      const username = avatarImg.alt
+      const potentialUsername = avatarImg.alt
         ? avatarImg.alt.replace("@", "").trim()
         : null;
-      if (!username) {
+
+      if (!isValidUsername(potentialUsername)) {
+        // If the alt text is not a valid username, mark cell as processed and skip.
+        cell.setAttribute(PROCESSED_MARKER, "true");
         return;
       }
+      const username = potentialUsername;
 
       // Find the span containing the username.
       // This is a simple approach: find all spans and check their textContent.
@@ -731,20 +844,53 @@
         return;
       }
 
-      const username = h3Element.textContent.trim();
+      let username = null;
+      let usernameSourceElement = h3Element; // Default to h3 for marking processed
 
-      if (!username || username === "No Assignees" || username === "") {
-        // Removed username.includes(' ')
-        // console.log('Skipping invalid or placeholder username (or one with spaces that was previously skipped):', username);
+      // Strategy 1: Look for an <a> tag within the h3Element that could be a user link
+      const userLinkInH3 = h3Element.querySelector('a[href^="/"]');
+      if (userLinkInH3) {
+        const potentialUsernameFromLink = getUsername(userLinkInH3); // getUsername already uses isValidUsername
+        if (potentialUsernameFromLink) {
+          username = potentialUsernameFromLink;
+          usernameSourceElement = userLinkInH3; // Mark the link if username found here
+        }
+      }
+
+      // Strategy 2: If no link in H3, check if H3 text itself is a valid username.
+      // This is the fallback and should be used cautiously.
+      // We rely on isValidUsername to filter out commit titles etc.
+      if (!username) {
+        const potentialUsernameFromH3Text = h3Element.textContent.trim();
+        if (isValidUsername(potentialUsernameFromH3Text) && potentialUsernameFromH3Text !== "No Assignees") {
+          username = potentialUsernameFromH3Text;
+        }
+      }
+
+      if (!username) {
+        // If no valid username could be extracted from link or text, mark and skip.
+        // This handles cases like "No Assignees" or headers that are definitely not usernames.
+        h3Element.setAttribute(PROCESSED_MARKER, "true");
+        // console.log('Skipping H3 as no valid username found in link or text:', h3Element.textContent.trim());
         return;
       }
 
-      const processUpdate = (userData) => { // Changed parameter name
+      // Mark the source element (h3 or the link within it) as processed if we have a valid username.
+      // This is to prevent reprocessing if the initial fetch fails and mutation observer picks it up again.
+      // However, the actual update callback will mark the h3Element after successful text update.
+      // Let's ensure the main h3Element is marked to prevent re-evaluating it.
+      // The PROCESSED_MARKER on h3Element was already there and is good.
+
+      const processUpdate = (userData) => {
+        // Update the h3 text content
         const h3Updated = updateTextNodes(h3Element, username, userData);
         if (h3Updated) {
+          // Mark the h3 element as processed only if text was changed to avoid issues
+          // if multiple valid usernames were somehow in the same H3 (unlikely).
           h3Element.setAttribute(PROCESSED_MARKER, "true");
         }
-        // Avatar alt attributes typically include "@"
+
+        // Update avatar alt text
         if (avatarElement.alt !== `@${userData}`) {
           avatarElement.alt = `@${userData}`;
         }
@@ -827,16 +973,38 @@
 
   // Get the username from the anchor tag, preferring the data-hovercard-url to the href.
   function getUsername(anchor) {
+    let usernameStr = null;
     const hover = anchor.getAttribute("data-hovercard-url");
     const href = anchor.getAttribute("href");
+
     if (hover) {
-      const match = hover.match(/^\/users\/((?!.*%5Bbot%5D)[^\/?]+)/);
-      if (match) return match[1];
-    } else if (href) {
-      const match = href.match(/^\/((?!orgs\/)(?!.*%5Bbot%5D)[^\/?]+)\/?$/);
-      if (match) return match[1];
+      // Regex to capture username from /users/USERNAME(/...) or /users/USERNAME?....
+      // Ensures username part is captured before any subsequent path or query.
+      const match = hover.match(/^\/users\/([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])*)(?:[\/?#]|$)/);
+      if (match) usernameStr = match[1];
     }
-    return;
+
+    if (!usernameStr && href) {
+      // Matches /username, /username?query, /username#hash
+      // Also matches /username/issues, /username/pulls, /username/projects, /username/commits (and their queries/hashes)
+      // Does not match /username/repo or other deeper paths.
+      const match = href.match(/^\/([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])*)(?:$|\?(?:[^#]*|$)|#(?:.*|$)|(?:\/(?:issues|pulls|projects|commits))(?:$|\?(?:[^#]*|$)|#(?:.*|$)))/);
+      const blacklist = /^(orgs|sponsors|marketplace|topics|collections|explore|trending|events|codespaces|settings|notifications|logout|features|pricing|readme|about|contact|site|security|open-source|customer-stories|team|enterprise|careers|blog|search|new|import|organizations|dashboard|stars|watching|profile|account|gist|integrations|apps|developer|sitemap|robots\.txt|humans\.txt|favicon\.ico|apple-touch-icon\.png|manifest\.json|login|join|session|sessions|auth|api|graphql|raw|blob|tree|releases|wiki|pulse|graphs|network|community|actions|packages|discussions|sponsors)$/i;
+      if (match && match[1] && !blacklist.test(match[1])) {
+        usernameStr = match[1];
+      }
+    }
+
+    if (usernameStr && isValidUsername(usernameStr)) {
+      // Explicitly exclude names that look like bot indicators from the URL itself,
+      // though isValidUsername should handle most structural issues.
+      // The main bot list check is in fetchDisplayName.
+      if (usernameStr.toLowerCase().includes("[bot]")) { // This was in old regex, good to keep a check here too.
+        return null;
+      }
+      return usernameStr;
+    }
+    return null; // Return null if not valid or not found
   }
 
   // Initial processing.

@@ -12,6 +12,8 @@ describe("GitHub Projects Elements", () => {
   let updateElements;
   let updateTextNodes;
   let processProjectElements; // Specific function for this test suite
+  let isValidUsername_mock; // Renamed to avoid conflict if it's global
+  let getUsername_mock;   // Renamed
 
   const PROCESSED_MARKER = "data-ghu-processed";
   const CACHE_KEY = "githubDisplayNameCache";
@@ -61,6 +63,32 @@ describe("GitHub Projects Elements", () => {
     };
     global.fetch = jest.fn();
     global.location = { hostname: "github.com" };
+
+    isValidUsername_mock = (username) => {
+      if (!username) return false;
+      const githubUsernameRegex = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
+      if (username.length > 39) return false;
+      return githubUsernameRegex.test(username);
+    };
+
+    getUsername_mock = (anchor) => {
+      if (!anchor) return null;
+      const href = anchor.getAttribute("href");
+      if (href) { // Check if href exists
+        // Simple mock: extract from "/username" or "/users/username/hovercard"
+        let potentialUser = null;
+        if (href.startsWith("/users/") && href.includes("/hovercard")) {
+            potentialUser = href.split('/')[2];
+        } else if (href.startsWith("/") && !href.includes('/', 1) && href.length > 1) {
+            potentialUser = href.substring(1);
+        }
+
+        if (potentialUser && isValidUsername_mock(potentialUser)) {
+          return potentialUser;
+        }
+      }
+      return null;
+    };
 
     updateTextNodes = (element, username, nameToDisplay) => {
       const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -155,12 +183,36 @@ describe("GitHub Projects Elements", () => {
             if (!hElement) return;
             if (hElement.hasAttribute(PROCESSED_MARKER)) return;
             
-            // Username is from the heading text content
-            const username = hElement.textContent.trim();
-            if (!username || username === "No Assignees" || username === "") return;
+            let usernameToProcess = null;
+
+            // Strategy 1: Look for an <a> tag within the hElement
+            const userLinkInH = hElement.querySelector('a[href^="/"]');
+            if (userLinkInH) {
+                const potentialUsernameFromLink = getUsername_mock(userLinkInH); // Use mocked getUsername
+                if (potentialUsernameFromLink) {
+                    usernameToProcess = potentialUsernameFromLink;
+                }
+            }
+
+            // Strategy 2: If no link, fall back to H text, validated
+            if (!usernameToProcess) {
+                const potentialUsernameFromHText = hElement.textContent.trim();
+                if (isValidUsername_mock(potentialUsernameFromHText) && potentialUsernameFromHText !== "No Assignees") { // Use mocked isValidUsername
+                    usernameToProcess = potentialUsernameFromHText;
+                }
+            }
+
+            if (!usernameToProcess) { // If still no valid username
+                hElement.setAttribute(PROCESSED_MARKER, "true"); // Mark to avoid re-processing invalid header
+                return;
+            }
+
+            // Use the successfully extracted username for processing
+            const finalUsername = usernameToProcess;
 
             const processUpdateCallback = (userData) => {
-                const hUpdated = updateTextNodes(hElement, username, userData.name);
+                // Pass finalUsername to updateTextNodes, as it's the one we matched.
+                const hUpdated = updateTextNodes(hElement, finalUsername, userData.name);
                 if (hUpdated) hElement.setAttribute(PROCESSED_MARKER, "true");
                 // Avatar alt text should typically be @username or @displayname
                 if (avatarElement.alt !== `@${userData.name}`) {
@@ -168,11 +220,12 @@ describe("GitHub Projects Elements", () => {
                 }
             };
 
-            if (displayNames[username] && displayNames[username].name !== undefined) {
-                processUpdateCallback(displayNames[username]);
+            // Use finalUsername for cache check, registration, and fetching
+            if (displayNames[finalUsername] && displayNames[finalUsername].name !== undefined) {
+                processUpdateCallback(displayNames[finalUsername]);
             } else {
-                registerElement(username, processUpdateCallback);
-                fetchDisplayName(username);
+                registerElement(finalUsername, processUpdateCallback);
+                fetchDisplayName(finalUsername);
             }
         });
     };
@@ -337,7 +390,97 @@ describe("GitHub Projects Elements", () => {
     await flushPromises();
 
     expect(heading.textContent).toBe("No Assignees");
-    expect(heading.hasAttribute(PROCESSED_MARKER)).toBe(false); // Should not be processed
+    // It IS processed in the sense that we evaluate it and decide not to fetch.
+    // So it should be marked to avoid re-evaluation.
+    expect(heading.hasAttribute(PROCESSED_MARKER)).toBe(true);
     expect(fetchDisplayName).not.toHaveBeenCalledWith("No Assignees");
+  });
+
+  test("should update username from H3 link (preferred) and avatar alt", async () => {
+    const usernameInLink = "linkedUser";
+    // For this test, the link text should be the username we expect updateTextNodes to find and replace.
+    const usernameToDisplayInLinkInitially = usernameInLink;
+    const displayName = "Linked User Display";
+    mockDisplayNamesForFetch[usernameInLink] = displayName;
+
+    document.body.innerHTML = `
+      <div class="item-container-generic">
+        <div class="leading-visual-wrapper-generic">
+          <div class="icon-wrapper-generic">
+            <img data-testid="github-avatar" alt="@${usernameInLink}" src="#" />
+          </div>
+        </div>
+        <div class="main-content-wrapper-generic">
+          <h3><a href="/${usernameInLink}">${usernameToDisplayInLinkInitially}</a></h3>
+        </div>
+      </div>
+    `;
+    const avatar = document.querySelector('img[data-testid="github-avatar"]');
+    const heading = document.querySelector("h3");
+
+    processProjectElements(document.body);
+    if (lastRegisteredCallback) {
+      lastRegisteredCallback({ name: displayName, timestamp: Date.now(), noExpire: false });
+    }
+    await flushPromises();
+
+    expect(fetchDisplayName).toHaveBeenCalledWith(usernameInLink);
+    expect(heading.textContent).toContain(displayName);
+    expect(avatar.getAttribute("alt")).toBe(`@${displayName}`);
+    expect(heading.getAttribute(PROCESSED_MARKER)).toBe("true");
+  });
+
+  test("should fallback to H3 text if H3 has no link and text is valid username", async () => {
+    const usernameInText = "textUserOnly";
+    const displayName = "Text User Only Display";
+    mockDisplayNamesForFetch[usernameInText] = displayName;
+
+    // Test scenario: H3 contains no link, text is username.
+    // setupPrimaryDOM creates this structure if the username doesn't contain a link.
+    const { avatar, heading } = setupPrimaryDOM(usernameInText, "h3", `@${usernameInText}`);
+
+    processProjectElements(document.body);
+    if (lastRegisteredCallback) {
+      lastRegisteredCallback({ name: displayName, timestamp: Date.now(), noExpire: false });
+    }
+    await flushPromises();
+
+    expect(fetchDisplayName).toHaveBeenCalledWith(usernameInText);
+    expect(heading.textContent).toBe(displayName);
+    expect(avatar.getAttribute("alt")).toBe(`@${displayName}`);
+    expect(heading.getAttribute(PROCESSED_MARKER)).toBe("true");
+  });
+
+  test("should not process H3 if neither link nor text is a valid username (e.g. commit title)", async () => {
+    const commitTitle = "This is a commit title not a username";
+    // Setup a DOM where H3 contains a link that won't resolve to a user, and text that isn't a username
+    document.body.innerHTML = `
+      <div class="item-container-generic">
+        <div class="leading-visual-wrapper-generic">
+          <div class="icon-wrapper-generic">
+            <img data-testid="github-avatar" alt="somealt" src="#" />
+          </div>
+        </div>
+        <div class="main-content-wrapper-generic">
+          <h3><a href="/some/non/user/path">Link to PR</a> ${commitTitle}</h3>
+        </div>
+      </div>
+    `;
+    // getUsername_mock for "/some/non/user/path" should return null.
+    // isValidUsername_mock for "Link to PR This is a commit title..." (textContent) should return false.
+
+    const heading = document.querySelector("h3");
+    processProjectElements(document.body);
+    await flushPromises();
+
+    // Check that fetchDisplayName was not called with anything resembling the commit title
+    // and specifically not with the parts of the text content.
+    const calls = fetchDisplayName.mock.calls;
+    const calledWithCommitTitlePart = calls.some(call => call[0].includes("commit title") || call[0].includes("Link to PR"));
+    expect(calledWithCommitTitlePart).toBe(false);
+
+    expect(heading.textContent).toContain(commitTitle); // Should remain unchanged
+    // It should be marked as processed because it was evaluated and found to have no valid username
+    expect(heading.getAttribute(PROCESSED_MARKER)).toBe("true");
   });
 });
