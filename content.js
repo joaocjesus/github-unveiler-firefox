@@ -854,8 +854,8 @@
 
       const processUpdate = (userData) => {
         // Update the text content
-        const h3Updated = updateTextNodes(userElement, username, userData);
-        if (h3Updated) {
+        const updated = updateTextNodes(userElement, username, userData);
+        if (updated) {
           // Mark the element as processed only if text was changed to avoid issues
           // if multiple valid usernames were somehow in the same element (unlikely).
           userElement.setAttribute(PROCESSED_MARKER, "true");
