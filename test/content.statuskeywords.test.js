@@ -79,7 +79,7 @@ describe("GitHub Projects Status Keyword Handling", () => {
       },
     };
     global.fetch = jest.fn();
-     global.location = { hostname: "github.com" };
+    global.location = { hostname: "github.com" };
 
     updateTextNodes = (element, username, nameToDisplay) => {
       const baseUsername = username.replace(/^@/, "");

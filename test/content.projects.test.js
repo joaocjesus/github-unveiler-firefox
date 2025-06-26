@@ -62,7 +62,7 @@ describe("GitHub Projects Elements", () => {
       },
     };
     global.fetch = jest.fn();
-     global.location = { hostname: "github.com" };
+    global.location = { hostname: "github.com" };
 
     isValidUsername_mock = (username) => {
       if (!username) return false;
