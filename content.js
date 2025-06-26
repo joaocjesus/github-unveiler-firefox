@@ -757,7 +757,7 @@
     );
 
     avatarsToProcess.forEach((avatarElement) => {
-      let h3Element = null;
+      let userElement = null;
 
       // Primary strategy: Traverse based on expected relative structure
       const iconWrapper = avatarElement.parentElement;
@@ -774,22 +774,22 @@
         // We expect the H3 to be a descendant of mainContentWrapper
         // Querying for any h1,h2,h3,h4 and taking the first found.
         // This provides some flexibility if H3 is not always used.
-        h3Element = mainContentWrapper.querySelector("h1, h2, h3, h4, h5, h6");
+        userElement = mainContentWrapper.querySelector("h1, h2, h3, h4, h5, h6");
       }
 
       // Fallback strategy: if primary strategy failed, try finding H3 within closest LI
-      if (!h3Element) {
+      if (!userElement) {
         const listItemAncestor = avatarElement.closest("li");
         if (listItemAncestor) {
           // Query for any h1,h2,h3,h4 and taking the first found within the LI
-          h3Element = listItemAncestor.querySelector("h1, h2, h3, h4, h5, h6");
+          userElement = listItemAncestor.querySelector("h1, h2, h3, h4, h5, h6");
         }
       }
 
-      // Fallback strategy 2: if still no H3, try a broader search within a less specific ancestor
+      // Fallback strategy 2: if still no element, try a broader search within a less specific ancestor
       // This is a wider net and should be used cautiously.
-      // Go up 3 levels from avatar and search for H3 there.
-      if (!h3Element) {
+      // Go up 3 levels from avatar and search for element there.
+      if (!userElement) {
         let current = avatarElement;
         let parentCount = 0;
         for (let i = 0; i < 3 && current.parentElement; i++) {
@@ -803,24 +803,24 @@
           current !== document.body &&
           current !== document.documentElement
         ) {
-          h3Element = current.querySelector("h1, h2, h3, h4, h5, h6");
+          userElement = current.querySelector("h1, h2, h3, h4, h5, h6");
         }
       }
 
-      if (!h3Element) {
+      if (!userElement) {
         // console.warn('Could not find a suitable H3 element for avatar:', avatarElement);
         return;
       }
 
-      if (h3Element.hasAttribute(PROCESSED_MARKER)) {
+      if (userElement.hasAttribute(PROCESSED_MARKER)) {
         return;
       }
 
       let username = null;
-      let usernameSourceElement = h3Element; // Default to h3 for marking processed
+      let usernameSourceElement = userElement; // Default to h3 for marking processed
 
-      // Strategy 1: Look for an <a> tag within the h3Element that could be a user link
-      const userLinkInH3 = h3Element.querySelector('a[href^="/"]');
+      // Strategy 1: Look for an <a> tag within the Element that could be a user link
+      const userLinkInH3 = userElement.querySelector('a[href^="/"]');
       if (userLinkInH3) {
         const potentialUsernameFromLink = getUsername(userLinkInH3); // getUsername already uses isValidUsername
         if (potentialUsernameFromLink) {
@@ -829,11 +829,11 @@
         }
       }
 
-      // Strategy 2: If no link in H3, check if H3 text itself is a valid username.
+      // Strategy 2: If no link in element, check if element text itself is a valid username.
       // This is the fallback and should be used cautiously.
       // We rely on isValidUsername to filter out commit titles etc.
       if (!username) {
-        const potentialUsernameFromH3Text = h3Element.textContent.trim();
+        const potentialUsernameFromH3Text = userElement.textContent.trim();
         if (isValidUsername(potentialUsernameFromH3Text) && potentialUsernameFromH3Text !== "No Assignees") {
           username = potentialUsernameFromH3Text;
         }
@@ -842,24 +842,23 @@
       if (!username) {
         // If no valid username could be extracted from link or text, mark and skip.
         // This handles cases like "No Assignees" or headers that are definitely not usernames.
-        h3Element.setAttribute(PROCESSED_MARKER, "true");
-        // console.log('Skipping H3 as no valid username found in link or text:', h3Element.textContent.trim());
+        userElement.setAttribute(PROCESSED_MARKER, "true");
         return;
       }
 
       // Mark the source element (h3 or the link within it) as processed if we have a valid username.
       // This is to prevent reprocessing if the initial fetch fails and mutation observer picks it up again.
-      // However, the actual update callback will mark the h3Element after successful text update.
-      // Let's ensure the main h3Element is marked to prevent re-evaluating it.
-      // The PROCESSED_MARKER on h3Element was already there and is good.
+      // However, the actual update callback will mark the element after successful text update.
+      // Let's ensure the main element is marked to prevent re-evaluating it.
+      // The PROCESSED_MARKER on element was already there and is good.
 
       const processUpdate = (userData) => {
-        // Update the h3 text content
-        const h3Updated = updateTextNodes(h3Element, username, userData);
+        // Update the text content
+        const h3Updated = updateTextNodes(userElement, username, userData);
         if (h3Updated) {
-          // Mark the h3 element as processed only if text was changed to avoid issues
-          // if multiple valid usernames were somehow in the same H3 (unlikely).
-          h3Element.setAttribute(PROCESSED_MARKER, "true");
+          // Mark the element as processed only if text was changed to avoid issues
+          // if multiple valid usernames were somehow in the same element (unlikely).
+          userElement.setAttribute(PROCESSED_MARKER, "true");
         }
 
         // Update avatar alt text
