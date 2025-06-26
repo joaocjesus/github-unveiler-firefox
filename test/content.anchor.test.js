@@ -272,19 +272,19 @@ describe("Anchor Processing", () => {
 
   test("should fetch and update display name with underscores on a valid anchor with data-hovercard-url", async () => {
     const anchor = document.createElement("a");
-    anchor.setAttribute("data-hovercard-url", "/users/testuser");
+    anchor.setAttribute("data-hovercard-url", "/users/test__user"); // Corrected username
     anchor.textContent = "Hello @test__user, welcome!";
     document.body.appendChild(anchor);
 
     processAnchorsByHovercard(document.body); // Call the test-scoped version
     
-    // Manually simulate callback if fetchDisplayName was called
+    // Manually simulate callback if fetchDisplayName was called for 'test__user'
     if (fetchDisplayName.mock.calls.some(call => call[0] === 'test__user')) {
         expect(lastRegisteredCallback).toBeDefined();
         // Simulate the data that fetchDisplayName would put into displayNames and pass to updateElements
-        const userData = { name: mockDisplayNamesForFetch.testuser, timestamp: Date.now(), noExpire: false };
+        const userData = { name: mockDisplayNamesForFetch.test__user, timestamp: Date.now(), noExpire: false }; // Corrected data source
         displayNames['test__user'] = userData; // Prime cache as fetch would
-        lastRegisteredCallback(userData); // Call the specific callback
+        if(lastRegisteredCallback) lastRegisteredCallback(userData); // Call the specific callback
     }
     await flushPromises();
 

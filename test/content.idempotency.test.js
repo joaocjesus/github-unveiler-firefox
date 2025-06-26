@@ -59,7 +59,7 @@ describe("Idempotency and Marker Tests", () => {
       },
     };
     global.fetch = jest.fn(); // Default mock, can be overridden by tests
-    global.location = { hostname: "github.com" };
+     global.location = { hostname: "github.com" };
 
     updateTextNodes = (element, username, nameToDisplay) => {
       const baseUsername = username.replace(/^@/, "");

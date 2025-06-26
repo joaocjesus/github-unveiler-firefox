@@ -505,7 +505,7 @@
       }
     } catch (err) {
       console.error("Error fetching display name for @" + username, err);
-      displayNames[username] = name;
+      displayNames[username] = username; // Fallback to username on error
       updateElements(username);
     }
   }
@@ -1007,36 +1007,55 @@
     return null; // Return null if not valid or not found
   }
 
-  // Initial processing.
-  processAnchorsByHovercard(document.body);
-  processProjectElements(document.body);
-  processSingleUserGridCell(document.body);
-  processMultiUserGridCell(document.body);
-  processBoardGroupHeader(document.body);
-
   // Set up a MutationObserver to handle new elements.
+  let debounceTimeout = null;
+  const nodesToProcess = new Set();
+  const DEBOUNCE_DELAY = 200; // ms
+
+  function processCollectedNodes() {
+    nodesToProcess.forEach(node => {
+      if (node.nodeType === Node.ELEMENT_NODE) { // Ensure it's still an element node
+        processAnchorsByHovercard(node);
+        processProjectElements(node);
+        processSingleUserGridCell(node);
+        processMultiUserGridCell(node);
+        processBoardGroupHeader(node);
+
+        // Check for hovercards
+        const hovercardSelector = 'div[data-hydro-view*="user-hovercard-hover"]';
+        // Check if the node itself is a hovercard
+        if (node.matches && node.matches(hovercardSelector)) {
+          processHovercard(node);
+        }
+        // Check children of the added node for hovercards
+        // This is important because a larger container might be added,
+        // and the hovercard itself is a descendant.
+        if (node.querySelectorAll) {
+          const childrenCards = node.querySelectorAll(hovercardSelector);
+          childrenCards.forEach(processHovercard);
+        }
+      }
+    });
+    nodesToProcess.clear();
+  }
+
   const observer = new MutationObserver((mutations) => {
+    let addedRelevantNode = false;
     for (const mutation of mutations) {
       mutation.addedNodes.forEach((node) => {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          processAnchorsByHovercard(node);
-          processProjectElements(node);
-          processSingleUserGridCell(node);
-          processMultiUserGridCell(node);
-          processBoardGroupHeader(node);
-
-          // Check for hovercards
-          const hovercardSelector = 'div[data-hydro-view*="user-hovercard-hover"]';
-          if (node.matches && node.matches(hovercardSelector)) { // Added node.matches check for safety
-            processHovercard(node);
-          }
-          // Check children of the added node
-          if (node.querySelectorAll) {
-            const childrenCards = node.querySelectorAll(hovercardSelector);
-            childrenCards.forEach(processHovercard);
-          }
+          // Add node to the set for processing.
+          // We add any element node and let the process functions filter.
+          // This is simpler than trying to be too specific here.
+          nodesToProcess.add(node);
+          addedRelevantNode = true;
         }
       });
+    }
+
+    if (addedRelevantNode) {
+      clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(processCollectedNodes, DEBOUNCE_DELAY);
     }
   });
 
@@ -1046,5 +1065,11 @@
   });
 
   // Initial scan for existing hovercards on page load
+  // Also perform initial scan for other elements covered by the observer's processing logic
+  processAnchorsByHovercard(document.body);
+  processProjectElements(document.body);
+  processSingleUserGridCell(document.body);
+  processMultiUserGridCell(document.body);
+  processBoardGroupHeader(document.body);
   document.querySelectorAll('div[data-hydro-view*="user-hovercard-hover"]').forEach(processHovercard);
 })();

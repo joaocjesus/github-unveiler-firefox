@@ -71,7 +71,7 @@ describe("Grid Cell Processing - Multi User", () => {
       },
     };
     global.fetch = jest.fn();
-    global.location = { hostname: "github.com" };
+     global.location = { hostname: "github.com" };
 
     updateTextNodes = (element, username, nameToDisplay) => {
       const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

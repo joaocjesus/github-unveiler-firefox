@@ -45,7 +45,7 @@ describe("Mutation Observer", () => {
       },
     };
     global.fetch = jest.fn();
-    global.location = { hostname: "github.com" };
+     global.location = { hostname: "github.com" };
 
     // --- Basic function definitions (copied and adapted from other test files) ---
     updateTextNodes = (element, username, nameToDisplay) => {

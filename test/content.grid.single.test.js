@@ -59,7 +59,7 @@ describe("Grid Cell Processing - Single User", () => {
       },
     };
     global.fetch = jest.fn();
-    global.location = { hostname: "github.com" };
+     global.location = { hostname: "github.com" };
 
     updateTextNodes = (element, username, nameToDisplay) => {
       const baseUsername = username.replace(/^@/, ""); // Ensure we match without @
