@@ -741,34 +741,6 @@
     });
   }
 
-  // Function to update the element directly
-  // This function is called by other callbacks which will now pass name
-  function updateElementDirectly(element, username, name) { // displayName changed to name
-    let changed = false;
-    if (
-      element.tagName === "H3" &&
-      element.classList.contains("slicer-items-module__title--EMqA1")
-    ) {
-      // updateTextNodes returns true if it made a change
-      changed = updateTextNodes(element, username, name);
-    } else if (
-      element.tagName === "IMG" &&
-      element.dataset.testid === "github-avatar"
-    ) {
-      if (element.alt === name) return false; // Already updated
-      element.alt = name; // This should be @name for alt tags, handled by caller if needed
-      changed = true;
-    } else if (
-      element.tagName === "SPAN" &&
-      element.hasAttribute("aria-label")
-    ) {
-      if (element.getAttribute("aria-label") === name) return false; // Already updated
-      element.setAttribute("aria-label", name);
-      changed = true;
-    }
-    return changed;
-  }
-
   function processProjectElements(root) {
     if (!(root instanceof Element)) return;
 
