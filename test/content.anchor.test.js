@@ -23,6 +23,7 @@ describe("Anchor Processing", () => {
     octouser: "Test Octo",
     user123: "Test User 123",
     TBBle: 'Paul "TBBle" Hampson',
+    test__user: "Test Underscores User",
     emptyUser: "", // fetchDisplayName will resolve with this, then content.js logic should handle it
     spaceUser: "   ", // fetchDisplayName will resolve with this
     nullUser: null, // fetchDisplayName will resolve with this (simulating no .vcard-fullname)
@@ -266,6 +267,28 @@ describe("Anchor Processing", () => {
     await flushPromises();
 
     expect(anchor.textContent).toBe("Hello @Test User, welcome!");
+    expect(anchor.getAttribute(PROCESSED_MARKER)).toBe("true");
+  });
+
+  test("should fetch and update display name with underscores on a valid anchor with data-hovercard-url", async () => {
+    const anchor = document.createElement("a");
+    anchor.setAttribute("data-hovercard-url", "/users/testuser");
+    anchor.textContent = "Hello @test__user, welcome!";
+    document.body.appendChild(anchor);
+
+    processAnchorsByHovercard(document.body); // Call the test-scoped version
+    
+    // Manually simulate callback if fetchDisplayName was called
+    if (fetchDisplayName.mock.calls.some(call => call[0] === 'test__user')) {
+        expect(lastRegisteredCallback).toBeDefined();
+        // Simulate the data that fetchDisplayName would put into displayNames and pass to updateElements
+        const userData = { name: mockDisplayNamesForFetch.testuser, timestamp: Date.now(), noExpire: false };
+        displayNames['test__user'] = userData; // Prime cache as fetch would
+        lastRegisteredCallback(userData); // Call the specific callback
+    }
+    await flushPromises();
+
+    expect(anchor.textContent).toBe("Hello @Test Underscores User, welcome!");
     expect(anchor.getAttribute(PROCESSED_MARKER)).toBe("true");
   });
 
