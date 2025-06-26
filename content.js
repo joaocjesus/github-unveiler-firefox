@@ -25,7 +25,7 @@
     // - Allowed characters: Alphanumeric and single hyphens
     // - Cannot start or end with a hyphen
     // - Cannot contain consecutive hyphens
-    const githubUsernameRegex = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
+    const githubUsernameRegex = /^[a-z\d_](?:[a-z\d_]|-(?=[a-z\d_])){0,38}$/i;
     if (username.length > 39) { // Double check length, though regex implies it.
         return false;
     }
