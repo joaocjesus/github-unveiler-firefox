@@ -179,18 +179,46 @@ describe("Anchor Processing", () => {
     });
     
     getUsername = (anchor) => {
+        let usernameStr = null;
         const hover = anchor.getAttribute("data-hovercard-url");
         const href = anchor.getAttribute("href");
+
         if (hover) {
-          const match = hover.match(/^\/users\/((?!.*%5Bbot%5D)[^\/?]+)/);
-          if (match) return match[1];
-        } else if (href) {
-          // Updated regex to be more permissive for href fallbacks like /orgs/*/people/*
-          // and general /username paths, but still avoid [bot].
-          let match = href.match(/^\/(orgs\/[^\/]+\/people\/)?((?!.*%5Bbot%5D)[^\/?]+)/);
-          if (match && match[2]) return match[2]; // match[2] is the username part
+            // Regex to capture username from /users/USERNAME(/...) or /users/USERNAME?....
+            // Ensures username part is captured before any subsequent path or query.
+            // This matches the fixed regex in content.js
+            const match = hover.match(/^\/users\/([a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])*)(?:[\/?#]|$)/);
+            if (match) usernameStr = match[1];
         }
-        return null;
+
+        if (!usernameStr && href) {
+            // Matches /username, /username/, /username?query, /username#hash
+            // Also matches /username/issues, /username/issues/, etc.
+            // This matches the fixed regex in content.js
+            const usernameRegex = /^\/([a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])*)(?:(?:\/)?(?:$|\?|#)|(?:\/(?:issues|pulls|projects|commits)(?:\/)?)?(?:$|\?|#))/;
+            const match = href.match(usernameRegex);
+            // Simplified blacklist check for the test environment, actual blacklist in content.js is more comprehensive
+            const blacklist = /^(orgs|sponsors|login|join)$/i;
+            if (match && match[1] && !blacklist.test(match[1])) {
+                usernameStr = match[1];
+            }
+        }
+
+        // Basic validation (simplified for test, actual isValidUsername is more complex)
+        // This part should reflect the isValidUsername from content.js as much as needed for the test's getUsername
+        if (usernameStr) {
+            const githubUsernameRegex = /^[a-z\d_](?:[a-z\d_]|-(?=[a-z\d_])){0,38}$/i; // Copied from content.js's isValidUsername
+            if (usernameStr.length > 39 || !githubUsernameRegex.test(usernameStr)) {
+                return null; // Failed validation
+            }
+            // Explicitly exclude names that look like bot indicators from the URL itself,
+            // though isValidUsername should handle most structural issues.
+            if (usernameStr.toLowerCase().includes("[bot]")) {
+                return null;
+            }
+            return usernameStr; // Passed validation
+        }
+        return null; // No username string found or extracted
     };
 
     processAnchorsByHovercard = (root) => {
