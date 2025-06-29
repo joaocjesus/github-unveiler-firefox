@@ -951,15 +951,15 @@
     if (hover) {
       // Regex to capture username from /users/USERNAME(/...) or /users/USERNAME?....
       // Ensures username part is captured before any subsequent path or query.
-      const match = hover.match(/^\/users\/([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])*)(?:[\/?#]|$)/);
+      const match = hover.match(/^\/users\/([a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])*)(?:[\/?#]|$)/);
       if (match) usernameStr = match[1];
     }
 
     if (!usernameStr && href) {
-      // Matches /username, /username?query, /username#hash
-      // Also matches /username/issues, /username/pulls, /username/projects, /username/commits (and their queries/hashes)
-      // Does not match /username/repo or other deeper paths.
-      const match = href.match(/^\/([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])*)(?:$|\?(?:[^#]*|$)|#(?:.*|$)|(?:\/(?:issues|pulls|projects|commits))(?:$|\?(?:[^#]*|$)|#(?:.*|$)))/);
+      // Matches /username, /username/, /username?query, /username#hash
+      // Also matches /username/issues, /username/issues/, etc.
+      const usernameRegex = /^\/([a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])*)(?:(?:\/)?(?:$|\?|#)|(?:\/(?:issues|pulls|projects|commits)(?:\/)?)?(?:$|\?|#))/;
+      const match = href.match(usernameRegex);
       const blacklist = /^(orgs|sponsors|marketplace|topics|collections|explore|trending|events|codespaces|settings|notifications|logout|features|pricing|readme|about|contact|site|security|open-source|customer-stories|team|enterprise|careers|blog|search|new|import|organizations|dashboard|stars|watching|profile|account|gist|integrations|apps|developer|sitemap|robots\.txt|humans\.txt|favicon\.ico|apple-touch-icon\.png|manifest\.json|login|join|session|sessions|auth|api|graphql|raw|blob|tree|releases|wiki|pulse|graphs|network|community|actions|packages|discussions|sponsors)$/i;
       if (match && match[1] && !blacklist.test(match[1])) {
         usernameStr = match[1];
