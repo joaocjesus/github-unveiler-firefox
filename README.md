@@ -1,22 +1,57 @@
-# GitHub Unveiler
+# GitHub Unveiler Firefox
 
-A Chrome extension to replace GitHub usernames with display names in references and links on GitHub pages.
+Firefox-only fork of the original GitHub Unveiler extension (v1.9). Use the upstream project for Chrome or other Chromium browsers. All core credit for the concept and initial implementation goes to the original author (@RedRecondite).
 
-Available on the Chrome Web Store: https://chromewebstore.google.com/detail/github-unveiler/nepdghlcapkfgnficpnefibalbhjofaa
+Upstream (Chrome) Web Store listing: https://chromewebstore.google.com/detail/github-unveiler/nepdghlcapkfgnficpnefibalbhjofaa  
+Upstream source repository: https://github.com/RedRecondite/github-unveiler
+
+This fork focuses on:
+* Firefox support (currently MV2 manifest)
+* Reduced friction for GitHub Enterprise instances
+* Incremental security hardening oriented to Firefox
 
 ## Usage
 
 1. Navigate to a GitHub web page.
-2. Click on the GitHub Unveiler icon in the Extensions menu.
-   - ![image](https://github.com/user-attachments/assets/be91de21-91af-44e3-a2d7-5cb2ef6e4349)
+2. Click on the GitHub Unveiler Firefox icon in the Extensions menu.
 3. Allow access.
-   - ![image](https://github.com/user-attachments/assets/153edcf3-aa4a-4d80-a43b-8061c6d1181d)
 
-## Developer Installation
+## Developer Installation (Firefox)
 
-If you'd like to tinker with it yourself, use these instructions. 
+Two options:
 
-1. Download a copy of this repository.
-2. Open Chrome and navigate to chrome://extensions.
-3. Enable "Developer mode" (if it isn’t already).
-4. Click Load unpacked and select this repository's folder.
+### Quick Temporary Install
+1. Open Firefox and go to `about:debugging#/runtime/this-firefox`.
+2. Click "Load Temporary Add-on".
+3. Select `manifest.json` (or any file in the folder) – Firefox will load the whole directory.
+4. Click the extension icon on a GitHub page to activate (the first click grants activeTab permission and injects the script).
+
+### Using web-ext (auto-reload)
+Install dependencies (first time only) then run the helper script:
+
+```
+npm install
+npm run firefox:run
+```
+
+The extension will launch in a temporary Firefox profile with verbose logging.
+
+### Building a signed package (for AMO submission)
+
+```
+npm run firefox:build
+```
+
+Artifacts will be in `dist/`. During AMO submission you can keep or change the `browser_specific_settings.gecko.id`.
+
+## Notes
+
+* Manifest: Currently MV2 (background script with `browser_action`).
+* Permissions: The button click uses `activeTab`. Optional host permissions now default narrowly to `https://github.com/*`. Add internal GitHub Enterprise hosts to `optional_permissions` (or move to `permissions`) in `manifest.json` and reload to persist.
+* CSP: Extension pages use a restrictive `content_security_policy` of `script-src 'self'; object-src 'self'` (no remote script execution).
+* Cache: Display names cached per-origin with 7‑day aging + soft cap (1000 entries per origin, older non-pinned entries evicted first).
+* `background.js` detects absence of `chrome.permissions.request` and falls back to activeTab injection.
+
+## Credits
+
+* Original concept & base implementation: GitHub Unveiler (Chrome) – credit to @RedRecondite (repository: https://github.com/RedRecondite/github-unveiler).

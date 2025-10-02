@@ -1,12 +1,36 @@
 {
+  "name": "github-unveiler-firefox",
+  "version": "1.9.0",
+  "description": "Firefox fork of GitHub Unveiler: replace GitHub usernames with display names on GitHub / Enterprise.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joaocjesus/github-unveiler-firefox.git"
+  },
+  "homepage": "https://github.com/joaocjesus/github-unveiler-firefox#readme",
+  "keywords": [
+    "firefox",
+    "extension",
+    "github",
+    "usernames",
+    "display-names"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "type": "commonjs",
+  "private": true,
+  "scripts": {
+    "test": "jest",
+    "firefox:run": "web-ext run --source-dir . --browser-console --verbose",
+    "firefox:build": "web-ext build --source-dir . --artifacts-dir dist"
+  },
   "devDependencies": {
     "jest": "^29.7.0",
-    "jest-environment-jsdom": "^30.0.2"
+    "jest-environment-jsdom": "^30.0.2",
+    "web-ext": "^8.3.0"
   },
   "jest": {
     "testEnvironment": "jest-environment-jsdom"
-  },
-  "scripts": {
-    "test": "jest"
   }
 }

@@ -1,9 +1,8 @@
-// background.js
-
 const CACHE_KEY = "githubDisplayNameCache";
 let nameLocks = {};  // key: origin+username, value: true if a fetch is in progress
 let cacheLock = Promise.resolve();
 const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+const MAX_CACHE_ENTRIES_PER_ORIGIN = 1000; // Soft cap to prevent unbounded growth
 
 // Clear cache: remove entries older than 7 days.
 async function clearOldCacheEntries() {
@@ -44,67 +43,109 @@ clearOldCacheEntries().catch((err) => {
 
 // --- Browser Action & Content Script Injection ---
 
-chrome.action.onClicked.addListener((tab) => {
-  if (!tab.url) {
-    console.error("No URL found for the active tab.");
-    return;
-  }
-
-  let url;
-  try {
-    url = new URL(tab.url);
-  } catch (e) {
-    console.error("Invalid URL:", tab.url);
-    return;
-  }
-
-  const originPattern = `${url.protocol}//${url.hostname}/*`;
-  console.log("Requesting permission for", originPattern);
-
-  // Request permission as part of a user gesture.
-  chrome.permissions.request({ origins: [originPattern] }, (granted) => {
-    if (granted) {
-      console.log("Permission granted for", originPattern);
-      injectContentScript(tab.id);
-    } else {
-      console.log("Permission denied for", originPattern);
+// Prefer browserAction (supported in MV2 Firefox); fall back to chrome.action if present.
+const actionAPI = (chrome.browserAction && chrome.browserAction.onClicked) ? chrome.browserAction : (chrome.action && chrome.action.onClicked ? chrome.action : null);
+if (actionAPI && actionAPI.onClicked) {
+  actionAPI.onClicked.addListener((tab) => {
+    console.log("[GHU] Action clicked");
+    if (!tab || !tab.url) {
+      console.error("No URL found for the active tab.");
+      return;
     }
-  });
-});
 
-// Listen for tab updates to auto-inject the content script when permission is already granted.
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Only proceed when the tab is fully loaded.
-  if (changeInfo.status === "complete" && tab.url) {
     let url;
     try {
       url = new URL(tab.url);
     } catch (e) {
+      console.error("Invalid URL:", tab.url);
       return;
     }
+
     const originPattern = `${url.protocol}//${url.hostname}/*`;
-    chrome.permissions.contains({ origins: [originPattern] }, (hasPermission) => {
-      if (hasPermission) {
-        console.log("Auto injecting content script for", originPattern);
-        injectContentScript(tabId);
-      } else {
-        console.log("No permission for", originPattern, "; content script not injected.");
-      }
-    });
+    console.log("Requesting permission for", originPattern);
+
+    // If permissions API missing OR activeTab should suffice, attempt direct injection.
+    if (!chrome.permissions || !chrome.permissions.request) {
+      console.log("permissions.request unavailable – using activeTab fallback for", originPattern);
+      injectContentScript(tab.id);
+      return;
+    }
+
+    try {
+      chrome.permissions.request({ origins: [originPattern] }, (granted) => {
+        if (chrome.runtime.lastError) {
+          console.warn("permissions.request error, falling back to activeTab:", chrome.runtime.lastError.message);
+          injectContentScript(tab.id);
+          return;
+        }
+        if (granted) {
+          console.log("Permission granted for", originPattern);
+          injectContentScript(tab.id);
+        } else {
+          // Legacy log line required by tests; do NOT inject when user explicitly denies.
+          console.log("Permission denied for", originPattern);
+          // Only attempt fallback injection if permissions API unreliable (handled earlier) – so skip here.
+        }
+      });
+    } catch (err) {
+      console.warn("permissions.request threw exception, fallback to activeTab:", err);
+      injectContentScript(tab.id);
+    }
+  });
+} else {
+  console.error("No action or browserAction API available; cannot attach click handler.");
+}
+
+// Listen for tab updates to auto-inject the content script when permission is already granted.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete" || !tab || !tab.url) return;
+
+  let url;
+  try { url = new URL(tab.url); } catch { return; }
+  const originPattern = `${url.protocol}//${url.hostname}/*`;
+
+  // If permissions API is missing (Firefox fallback), skip auto-inject since we rely on activeTab click.
+  if (!chrome.permissions || !chrome.permissions.contains) {
+    return;
   }
+
+  chrome.permissions.contains({ origins: [originPattern] }, (hasPermission) => {
+    if (hasPermission) {
+      console.log("Auto injecting content script for", originPattern);
+      injectContentScript(tabId);
+    } else {
+      console.log("No permission for", originPattern, "; content script not injected.");
+    }
+  });
 });
 
 function injectContentScript(tabId) {
-  chrome.scripting.executeScript({
-    target: { tabId: tabId },
-    files: ["content.js"]
-  }, () => {
-    if (chrome.runtime.lastError) {
-      console.error("Script injection failed:", chrome.runtime.lastError);
-    } else {
-      console.log("Content script injected into tab", tabId);
-    }
-  });
+  // MV3 path (Chrome / future Firefox)
+  if (chrome.scripting && chrome.scripting.executeScript) {
+    chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      files: ["content.js"]
+    }, () => {
+      if (chrome.runtime.lastError) {
+        console.error("Script injection failed:", chrome.runtime.lastError);
+      } else {
+        console.log("Content script injected into tab", tabId);
+      }
+    });
+    return;
+  }
+  // MV2 fallback (Firefox when service workers disabled)
+  if (chrome.tabs && chrome.tabs.executeScript) {
+    chrome.tabs.executeScript(tabId, { file: "content.js" }, () => {
+      if (chrome.runtime.lastError) {
+        console.error("Script injection failed (tabs.executeScript):", chrome.runtime.lastError);
+      } else {
+        console.log("Content script injected (MV2 fallback) into tab", tabId);
+      }
+    });
+    return;
+  }
+  console.error("No supported script injection API available.");
 }
 
 // --- Lock Manager & Cache Update ---
@@ -166,6 +207,25 @@ async function updateCache(origin, username, displayName) {
       noExpireValue = true;
     }
     serverCache[username] = { displayName, timestamp: Date.now(), noExpire: noExpireValue };
+
+    // If cache exceeds cap, evict oldest non noExpire entries.
+    const keys = Object.keys(serverCache);
+    if (keys.length > MAX_CACHE_ENTRIES_PER_ORIGIN) {
+      const evictionCandidates = keys
+        .map(k => ({ k, ts: serverCache[k].timestamp, noExpire: serverCache[k].noExpire }))
+        .filter(e => !e.noExpire)
+        .sort((a, b) => a.ts - b.ts); // oldest first
+      const overBy = keys.length - MAX_CACHE_ENTRIES_PER_ORIGIN;
+      let removed = 0;
+      for (const cand of evictionCandidates) {
+        if (removed >= overBy) break;
+        delete serverCache[cand.k];
+        removed++;
+      }
+      if (removed > 0) {
+        console.log(`Evicted ${removed} old cache entries for origin ${origin}`);
+      }
+    }
     cache[origin] = serverCache;
     await setCache(cache);
   }).catch((err) => {
