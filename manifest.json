@@ -4,13 +4,13 @@
   "version": "0.1.9",
   "description": "Replaces GitHub usernames with display names in GitHub and GitHub Enterprise instances.",
   "permissions": [
-    "tabs",
     "storage",
     "activeTab"
   ],
   "optional_permissions": [
-    "https://github.com/*"
+    "https://*/*"
   ],
+  
   "content_security_policy": "script-src 'self'; object-src 'self'",
   "browser_action": {
     "default_title": "Enable GitHub Unveiler (FF)"

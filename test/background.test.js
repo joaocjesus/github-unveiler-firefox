@@ -60,21 +60,21 @@ describe("background.js", () => {
             const result = {};
             const keysToProcess = Array.isArray(keys) ? keys : [keys];
             keysToProcess.forEach(key => {
-                // Ensure deep clone to prevent tests from modifying the fakeStorage directly through a reference
-                result[key] = JSON.parse(JSON.stringify(fakeStorage[key] || {}));
+              // Ensure deep clone to prevent tests from modifying the fakeStorage directly through a reference
+              result[key] = JSON.parse(JSON.stringify(fakeStorage[key] || {}));
             });
-             // background.js specifically requests { [CACHE_KEY]: {} } sometimes, handle this.
+            // background.js specifically requests { [CACHE_KEY]: {} } sometimes, handle this.
             if (keysToProcess.length === 1 && typeof keysToProcess[0] === 'object' && keysToProcess[0][CACHE_KEY]) {
-                result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
+              result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
             } else if (keysToProcess.includes(CACHE_KEY)) {
-                 result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
+              result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
             }
             callback(result);
           }),
           set: jest.fn((obj, callback) => {
             for (const key in obj) {
-                // Ensure deep clone
-                fakeStorage[key] = JSON.parse(JSON.stringify(obj[key]));
+              // Ensure deep clone
+              fakeStorage[key] = JSON.parse(JSON.stringify(obj[key]));
             }
             if (callback) callback();
           }),
@@ -82,9 +82,9 @@ describe("background.js", () => {
       },
     };
 
-    jest.spyOn(console, "log").mockImplementation(() => {});
-    jest.spyOn(console, "error").mockImplementation(() => {});
-    
+    jest.spyOn(console, "log").mockImplementation(() => { });
+    jest.spyOn(console, "error").mockImplementation(() => { });
+
     // Date.now mocking setup
     originalDateNow = Date.now;
     Date.now = jest.fn(() => new Date('2023-01-15T12:00:00.000Z').getTime()); // Default mock time
@@ -128,14 +128,16 @@ describe("background.js", () => {
       );
     });
 
-    it("should log that permission was denied if not granted", () => {
+    it("should log that permission was denied and still inject one-off via activeTab", () => {
       const tab = { id: 1, url: "https://example.com/page" };
       const expectedOriginPattern = "https://example.com/*";
       chrome.permissions.request.mockImplementation((options, callback) => { callback(false); });
       onClickedCallback(tab);
       expect(console.log).toHaveBeenCalledWith("Requesting permission for", expectedOriginPattern);
       expect(console.log).toHaveBeenCalledWith("Permission denied for", expectedOriginPattern);
-      expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
+        { target: { tabId: tab.id }, files: ["content.js"] }, expect.any(Function)
+      );
     });
   });
 
@@ -160,7 +162,7 @@ describe("background.js", () => {
         callback(true);
       });
       onUpdatedCallback(tab.id, { status: "complete" }, tab);
-      expect(console.log).toHaveBeenCalledWith("Auto injecting content script for", expectedOriginPattern);
+      expect(console.log).toHaveBeenCalledWith("Auto-enabled for", expectedOriginPattern);
       expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
         { target: { tabId: tab.id }, files: ["content.js"] }, expect.any(Function)
       );
@@ -171,7 +173,7 @@ describe("background.js", () => {
       const expectedOriginPattern = "https://example.com/*";
       chrome.permissions.contains.mockImplementation((options, callback) => { callback(false); });
       onUpdatedCallback(tab.id, { status: "complete" }, tab);
-      expect(console.log).toHaveBeenCalledWith("No permission for", expectedOriginPattern, "; content script not injected.");
+      expect(console.log).toHaveBeenCalledWith("No permission for", expectedOriginPattern, "; content script not loaded.");
       expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
     });
   });
@@ -223,26 +225,26 @@ describe("background.js", () => {
   // --- Merged detailed cache tests ---
   describe("updateCache (Detailed noExpire Logic via onMessage 'releaseLock')", () => {
     async function triggerUpdateCache(origin, username, displayName, initialCacheState = {}) {
-        fakeStorage[CACHE_KEY] = initialCacheState; // Set initial state for the test
-        // Ensure lock can be acquired
-        onMessageCallback({ type: "acquireLock", origin, username }, null, jest.fn());
-        
-        const promise = new Promise(resolve => {
-            onMessageCallback(
-                { type: "releaseLock", origin, username, displayName },
-                null,
-                (response) => { expect(response.success).toBe(true); resolve(); }
-            );
-        });
-        await promise;
+      fakeStorage[CACHE_KEY] = initialCacheState; // Set initial state for the test
+      // Ensure lock can be acquired
+      onMessageCallback({ type: "acquireLock", origin, username }, null, jest.fn());
+
+      const promise = new Promise(resolve => {
+        onMessageCallback(
+          { type: "releaseLock", origin, username, displayName },
+          null,
+          (response) => { expect(response.success).toBe(true); resolve(); }
+        );
+      });
+      await promise;
     }
 
     it("should add a new entry with noExpire: false by default", async () => {
       const currentTime = new Date('2023-01-16T00:00:00.000Z').getTime();
       Date.now = jest.fn(() => currentTime);
-      
+
       await triggerUpdateCache('origin1', 'user1', 'User One', {});
-      
+
       const cache = fakeStorage[CACHE_KEY];
       expect(cache.origin1.user1).toEqual({
         displayName: 'User One', timestamp: currentTime, noExpire: false,
@@ -253,11 +255,11 @@ describe("background.js", () => {
       const initialTime = new Date('2023-01-10T00:00:00.000Z').getTime();
       const updateTime = new Date('2023-01-16T00:00:00.000Z').getTime();
       Date.now = jest.fn(() => updateTime);
-      
+
       await triggerUpdateCache('origin1', 'user1', 'User One New Name', {
         origin1: { user1: { displayName: 'Old Name', timestamp: initialTime, noExpire: true } },
       });
-      
+
       const cache = fakeStorage[CACHE_KEY];
       expect(cache.origin1.user1).toEqual({
         displayName: 'User One New Name', timestamp: updateTime, noExpire: true,
@@ -298,42 +300,42 @@ describe("background.js", () => {
   describe("clearOldCacheEntries (Detailed Logic)", () => {
     // Helper to re-require background.js and wait for clearOldCacheEntries to complete
     async function triggerAndAwaitClearOldCache() {
-        jest.resetModules(); // This is key to re-run top-level code in background.js
-        const clearPromise = new Promise(resolve => {
-            // Temporarily override set to know when clearOldCacheEntries's set call is done
-            const originalStorageSet = global.chrome.storage.local.set;
-            global.chrome.storage.local.set = jest.fn((data, cb) => {
-                originalStorageSet(data, cb); // Call original to update fakeStorage
-                resolve(); // Resolve promise when set is called
-            });
-             // Ensure 'get' provides the current state of fakeStorage for this specific run
-            global.chrome.storage.local.get = jest.fn((keys, cb) => {
-                const result = {};
-                const keysToProcess = Array.isArray(keys) ? keys : [keys];
-                keysToProcess.forEach(key => {
-                    result[key] = JSON.parse(JSON.stringify(fakeStorage[key] || {}));
-                });
-                if (keysToProcess.length === 1 && typeof keysToProcess[0] === 'object' && keysToProcess[0][CACHE_KEY]) {
-                     result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
-                } else if (keysToProcess.includes(CACHE_KEY)) {
-                     result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
-                }
-                cb(result);
-            });
+      jest.resetModules(); // This is key to re-run top-level code in background.js
+      const clearPromise = new Promise(resolve => {
+        // Temporarily override set to know when clearOldCacheEntries's set call is done
+        const originalStorageSet = global.chrome.storage.local.set;
+        global.chrome.storage.local.set = jest.fn((data, cb) => {
+          originalStorageSet(data, cb); // Call original to update fakeStorage
+          resolve(); // Resolve promise when set is called
+        });
+        // Ensure 'get' provides the current state of fakeStorage for this specific run
+        global.chrome.storage.local.get = jest.fn((keys, cb) => {
+          const result = {};
+          const keysToProcess = Array.isArray(keys) ? keys : [keys];
+          keysToProcess.forEach(key => {
+            result[key] = JSON.parse(JSON.stringify(fakeStorage[key] || {}));
+          });
+          if (keysToProcess.length === 1 && typeof keysToProcess[0] === 'object' && keysToProcess[0][CACHE_KEY]) {
+            result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
+          } else if (keysToProcess.includes(CACHE_KEY)) {
+            result[CACHE_KEY] = JSON.parse(JSON.stringify(fakeStorage[CACHE_KEY] || {}));
+          }
+          cb(result);
+        });
 
-            require("../background.js"); // Executes clearOldCacheEntries
-            // Restore original set immediately if background.js doesn't make further set calls
-            // or if clearOldCacheEntries is synchronous in its set call.
-            // Given it's async, this resolve in the mock is better.
-        });
-        // If clearOldCacheEntries makes no changes, set won't be called.
-        // Add a timeout fallback for such cases to prevent test hanging.
-        await Promise.race([clearPromise, new Promise(r => setTimeout(r, 50))]);
-        // Restore the original set mock from beforeEach for other tests
-        global.chrome.storage.local.set = jest.fn((obj, cb) => {
-            for (const key in obj) fakeStorage[key] = JSON.parse(JSON.stringify(obj[key]));
-            if (cb) cb();
-        });
+        require("../background.js"); // Executes clearOldCacheEntries
+        // Restore original set immediately if background.js doesn't make further set calls
+        // or if clearOldCacheEntries is synchronous in its set call.
+        // Given it's async, this resolve in the mock is better.
+      });
+      // If clearOldCacheEntries makes no changes, set won't be called.
+      // Add a timeout fallback for such cases to prevent test hanging.
+      await Promise.race([clearPromise, new Promise(r => setTimeout(r, 50))]);
+      // Restore the original set mock from beforeEach for other tests
+      global.chrome.storage.local.set = jest.fn((obj, cb) => {
+        for (const key in obj) fakeStorage[key] = JSON.parse(JSON.stringify(obj[key]));
+        if (cb) cb();
+      });
     }
 
     it("entry with noExpire: true is NOT cleared even if very old", async () => {
@@ -375,7 +377,7 @@ describe("background.js", () => {
       await triggerAndAwaitClearOldCache();
       expect(fakeStorage[CACHE_KEY].origin1.userC).toBeDefined();
     });
-    
+
     it("origin is cleared if all its users are cleared", async () => {
       const futureTime = new Date('2023-01-30T00:00:00.000Z').getTime();
       Date.now = jest.fn(() => futureTime);
@@ -402,7 +404,7 @@ describe("background.js", () => {
           emptyNoExpire: { displayName: "", timestamp: eightDaysAgo, noExpire: true },
           spaceRecent: { displayName: "   ", timestamp: oneDayAgo, noExpire: false },
           validNoExpire: { displayName: "Valid Name", timestamp: eightDaysAgo, noExpire: true },
-          emptyToBeDeleted: { displayName: "", timestamp: eightDaysAgo, noExpire: false}
+          emptyToBeDeleted: { displayName: "", timestamp: eightDaysAgo, noExpire: false }
         }
       };
       await triggerAndAwaitClearOldCache();
@@ -413,20 +415,20 @@ describe("background.js", () => {
       expect(originCache.emptyToBeDeleted).toBeUndefined();
     });
   });
-  
+
   // --- End of Merged detailed cache tests ---
 
   describe("injectContentScript (via chrome.scripting.executeScript)", () => {
     // Original tests for injectContentScript remain relevant
-    it("should log an error if script injection fails", () => {
+    it("should log an error if script load fails", () => {
       chrome.scripting.executeScript.mockImplementation((options, callback) => {
-        chrome.runtime.lastError = { message: "Injection failed" };
+        chrome.runtime.lastError = { message: "Load failed" };
         callback();
       });
       const tab = { id: 1, url: "https://example.com/page" };
       chrome.permissions.request.mockImplementation((options, callback) => { callback(true); });
       onClickedCallback(tab);
-      expect(console.error).toHaveBeenCalledWith("Script injection failed:", { message: "Injection failed" });
+      expect(console.error).toHaveBeenCalledWith("Content script load failed:", { message: "Load failed" });
       chrome.runtime.lastError = null;
     });
 
@@ -436,7 +438,7 @@ describe("background.js", () => {
       chrome.runtime.lastError = null; // Ensure no error for this test
       chrome.scripting.executeScript.mockImplementation((options, callback) => { if (callback) callback(); }); // Ensure callback is called
       onClickedCallback(tab);
-      expect(console.log).toHaveBeenCalledWith("Content script injected into tab", tab.id);
+      expect(console.log).toHaveBeenCalledWith("Content script loaded into tab", tab.id);
     });
   });
 });

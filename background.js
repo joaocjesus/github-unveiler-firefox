@@ -67,7 +67,7 @@ if (actionAPI && actionAPI.onClicked) {
     // If permissions API missing OR activeTab should suffice, attempt direct injection.
     if (!chrome.permissions || !chrome.permissions.request) {
       console.log("permissions.request unavailable – using activeTab fallback for", originPattern);
-      injectContentScript(tab.id);
+      loadContentScript(tab.id);
       return;
     }
 
@@ -75,51 +75,53 @@ if (actionAPI && actionAPI.onClicked) {
       chrome.permissions.request({ origins: [originPattern] }, (granted) => {
         if (chrome.runtime.lastError) {
           console.warn("permissions.request error, falling back to activeTab:", chrome.runtime.lastError.message);
-          injectContentScript(tab.id);
+          loadContentScript(tab.id);
           return;
         }
         if (granted) {
           console.log("Permission granted for", originPattern);
-          injectContentScript(tab.id);
+          loadContentScript(tab.id);
         } else {
-          // Legacy log line required by tests; do NOT inject when user explicitly denies.
+          // Respect denial by not persisting, but still allow one-off via activeTab.
           console.log("Permission denied for", originPattern);
-          // Only attempt fallback injection if permissions API unreliable (handled earlier) – so skip here.
+          loadContentScript(tab.id);
         }
       });
     } catch (err) {
       console.warn("permissions.request threw exception, fallback to activeTab:", err);
-      injectContentScript(tab.id);
+      loadContentScript(tab.id);
     }
   });
 } else {
   console.error("No action or browserAction API available; cannot attach click handler.");
 }
 
-// Listen for tab updates to auto-inject the content script when permission is already granted.
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "complete" || !tab || !tab.url) return;
+// Listen for tab updates and auto-enable where permission is already granted.
+if (chrome.tabs && chrome.tabs.onUpdated && chrome.tabs.onUpdated.addListener) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status !== "complete" || !tab || !tab.url) return;
 
-  let url;
-  try { url = new URL(tab.url); } catch { return; }
-  const originPattern = `${url.protocol}//${url.hostname}/*`;
+    let url;
+    try { url = new URL(tab.url); } catch { return; }
+    const originPattern = `${url.protocol}//${url.hostname}/*`;
 
-  // If permissions API is missing (Firefox fallback), skip auto-inject since we rely on activeTab click.
-  if (!chrome.permissions || !chrome.permissions.contains) {
-    return;
-  }
-
-  chrome.permissions.contains({ origins: [originPattern] }, (hasPermission) => {
-    if (hasPermission) {
-      console.log("Auto injecting content script for", originPattern);
-      injectContentScript(tabId);
-    } else {
-      console.log("No permission for", originPattern, "; content script not injected.");
+    // If permissions API is missing, skip auto behavior.
+    if (!chrome.permissions || !chrome.permissions.contains) {
+      return;
     }
-  });
-});
 
-function injectContentScript(tabId) {
+    chrome.permissions.contains({ origins: [originPattern] }, (hasPermission) => {
+      if (hasPermission) {
+        console.log("Auto-enabled for", originPattern);
+        loadContentScript(tabId);
+      } else {
+        console.log("No permission for", originPattern, "; content script not loaded.");
+      }
+    });
+  });
+}
+
+function loadContentScript(tabId) {
   // MV3 path (Chrome / future Firefox)
   if (chrome.scripting && chrome.scripting.executeScript) {
     chrome.scripting.executeScript({
@@ -127,9 +129,9 @@ function injectContentScript(tabId) {
       files: ["content.js"]
     }, () => {
       if (chrome.runtime.lastError) {
-        console.error("Script injection failed:", chrome.runtime.lastError);
+        console.error("Content script load failed:", chrome.runtime.lastError);
       } else {
-        console.log("Content script injected into tab", tabId);
+        console.log("Content script loaded into tab", tabId);
       }
     });
     return;
@@ -138,9 +140,9 @@ function injectContentScript(tabId) {
   if (chrome.tabs && chrome.tabs.executeScript) {
     chrome.tabs.executeScript(tabId, { file: "content.js" }, () => {
       if (chrome.runtime.lastError) {
-        console.error("Script injection failed (tabs.executeScript):", chrome.runtime.lastError);
+        console.error("Content script load failed (tabs.executeScript):", chrome.runtime.lastError);
       } else {
-        console.log("Content script injected (MV2 fallback) into tab", tabId);
+        console.log("Content script loaded (MV2 fallback) into tab", tabId);
       }
     });
     return;

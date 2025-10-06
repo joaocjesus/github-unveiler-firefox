@@ -47,7 +47,6 @@ Artifacts will be in `dist/`. During AMO submission you can keep or change the `
 ## Notes
 
 * Manifest: Currently MV2 (background script with `browser_action`).
-* Permissions: The button click uses `activeTab`. Optional host permissions now default narrowly to `https://github.com/*`. Add internal GitHub Enterprise hosts to `optional_permissions` (or move to `permissions`) in `manifest.json` and reload to persist.
 * CSP: Extension pages use a restrictive `content_security_policy` of `script-src 'self'; object-src 'self'` (no remote script execution).
 * Cache: Display names cached per-origin with 7‑day aging + soft cap (1000 entries per origin, older non-pinned entries evicted first).
 * `background.js` detects absence of `chrome.permissions.request` and falls back to activeTab injection.
