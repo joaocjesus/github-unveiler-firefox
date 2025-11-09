@@ -2,6 +2,8 @@
 
 Firefox-only fork of the original GitHub Unveiler extension (v1.9). Use the upstream project for Chrome or other Chromium browsers. All core credit for the concept and initial implementation goes to the original author (@RedRecondite).
 
+Get it from Firefox Addons page: https://addons.mozilla.org/en-GB/firefox/addon/github-unveiler-ff/
+
 Upstream (Chrome) Web Store listing: https://chromewebstore.google.com/detail/github-unveiler/nepdghlcapkfgnficpnefibalbhjofaa  
 Upstream source repository: https://github.com/RedRecondite/github-unveiler
 
